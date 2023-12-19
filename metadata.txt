@@ -7,6 +7,7 @@ qgisMinimumVersion=3.4
 author=Brendan Ashworth
 email=brendan@buntinglabs.com
 repository=https://github.com/BuntingLabs/buntinglabs-qgis-plugin
+tracker=https://github.com/BuntingLabs/buntinglabs-qgis-plugin/issues
 homepage=https://buntinglabs.com
 icon=icon.png
 category=Vector
