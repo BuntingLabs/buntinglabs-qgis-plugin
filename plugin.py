@@ -49,15 +49,14 @@ class BuntingLabsPlugin:
         vlayer = self.iface.activeLayer()
         if isinstance(vlayer, QgsVectorLayer):
             if vlayer.wkbType() in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString]:
-                current_mode = QgsMapToolCapture.CaptureLine
+                self.tracer = AIVectorizerTool(self, QgsMapToolCapture.CaptureLine)
             elif vlayer.wkbType() == QgsWkbTypes.Polygon:
-                current_mode = QgsMapToolCapture.CapturePolygon
+                self.tracer = AIVectorizerTool(self, QgsMapToolCapture.CapturePolygon)
             else:
                 self.iface.messageBar().pushMessage(
                     "Error",
                     "Unknown vector layer type.",
                     Qgis.Critical)
-        self.tracer = AIVectorizerTool(self, current_mode)
 
     def initGui(self):
         # Initialize the plugin GUI
