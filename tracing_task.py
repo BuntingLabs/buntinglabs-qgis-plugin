@@ -113,26 +113,22 @@ class AutocompleteTask(QgsTask):
         p.end()
 
         # Create temporary files for png and tif images
-        png_temp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        tif_temp = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+        with tempfile.NamedTemporaryFile(suffix=".png") as png_temp, \
+             tempfile.NamedTemporaryFile(suffix=".tif") as tif_temp:
 
-        # Save the image to the temporary png file
-        img.save(png_temp.name, "png")
+            # Save the image to the temporary png file
+            img.save(png_temp.name, "png")
 
-        # Print png_temp.name's size and filename
-        print(f'PNG file size: {os.path.getsize(png_temp.name)} bytes')
-        print(f'PNG file name: {png_temp.name}')
+            # Print png_temp.name's size and filename
+            print(f'PNG file size: {os.path.getsize(png_temp.name)} bytes')
+            print(f'PNG file name: {png_temp.name}')
 
-        # Call the function to convert the png to tif and save it to the temporary tif file
-        georeference_png_to_tiff(png_temp.name, tif_temp.name, mapEpsgCode, x_min, y_min, x_max, y_max)
+            # Call the function to convert the png to tif and save it to the temporary tif file
+            georeference_png_to_tiff(png_temp.name, tif_temp.name, mapEpsgCode, x_min, y_min, x_max, y_max)
 
-        # Prepare the image payload
-        with open(tif_temp.name, 'rb') as f:
-            img_data = f.read()
-
-        # Delete the temporary files
-        os.unlink(png_temp.name)
-        os.unlink(tif_temp.name)
+            # Prepare the image payload
+            with open(tif_temp.name, 'rb') as f:
+                img_data = f.read()
 
         i_min, j_min = convert_coords_to_indxs(primaryrlayer, (x_min, y_max))
         i0, j0 = convert_coords_to_indxs(primaryrlayer, (x0, y0))
