@@ -3,8 +3,8 @@
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QPushButton
 from qgis.gui import QgsMapToolCapture
-from qgis.core import Qgis, QgsFeature, QgsApplication, \
-    QgsGeometry, QgsPolygon, QgsProject, QgsPointXY, QgsRasterLayer
+from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
+    QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer
 
 from .tracing_task import AutocompleteTask
 
@@ -62,6 +62,12 @@ class AIVectorizerTool(QgsMapToolCapture):
         # Right click means we end
         if e.button() == Qt.RightButton:
             vlayer = self.plugin.iface.activeLayer()
+            if not isinstance(vlayer, QgsVectorLayer):
+                self.plugin.iface.messageBar().pushMessage(
+                    "Info",
+                    "No active vector layer.",
+                    Qgis.Info)
+                return
 
             # Will be converted to the relevant geometry
             curve = self.captureCurve()
