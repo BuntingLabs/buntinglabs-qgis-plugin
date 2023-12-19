@@ -175,7 +175,7 @@ class AutocompleteTask(QgsTask):
 
         try:
             conn = http.client.HTTPSConnection("qgis-api.buntinglabs.com")
-            conn.request("POST", "/", body, headers)
+            conn.request("POST", "/v1", body, headers)
             res = conn.getresponse()
             if res.status != 200:
                 self.errorReceived.emit(res.read().decode('utf-8'))
