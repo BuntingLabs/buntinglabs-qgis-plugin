@@ -124,7 +124,7 @@ class AutocompleteTask(QgsTask):
             print(f'PNG file name: {png_temp.name}')
 
             # Call the function to convert the png to tif and save it to the temporary tif file
-            georeference_png_to_tiff(png_temp.name, tif_temp.name, mapEpsgCode, x_min, y_min, x_max, y_max)
+            georeference_png_to_tiff(png_temp.name, tif_temp.name, mapEpsgCode, x_min, y_max, x_max, y_min)
 
             # Prepare the image payload
             with open(tif_temp.name, 'rb') as f:
