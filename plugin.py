@@ -30,6 +30,7 @@ class BuntingLabsPlugin:
         self.tracer = None
 
     def current_layer_change_event(self, layer):
+        # TODO why do we have layer argument, then override it?
         # if the current layer is editable, or becomes editable in the future,
         # switch our plugin status
         layer = self.iface.activeLayer()
@@ -69,6 +70,9 @@ class BuntingLabsPlugin:
 
         # Uncheck ourselves if they change tools
         self.iface.mapCanvas().mapToolSet.connect(self.onMapToolChanged)
+
+        # Trigger a current layer change event to get the right action
+        self.current_layer_change_event(None)
 
     def openSettings(self):
         # Create a closeable modal for API key input
