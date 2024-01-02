@@ -126,7 +126,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # Check if the shift key is being pressed
         # We hide the geometry rubber band when the shift button goes down
-        if e.modifiers() & Qt.ShiftModifier:
+        if e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
             # Shift means our last vertex should effectively be the closest point to the line
             (last_point, poly_geo) = self.shiftClickAdjustment(e.pos())
 
@@ -134,10 +134,10 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.rb.setFillColor(get_complement(self.digitizingFillColor()))
             self.rb.setColor(get_complement(self.digitizingStrokeColor()))
         else:
-            last_point = QgsPointXY(self.vertices[-1].x(), self.vertices[-1].y())
+            last_point = self.vertices[-1]
 
             # Close it!
-            points = self.vertices + [ QgsPointXY(pt.x(), pt.y()), self.vertices[0]]
+            points = [ self.vertices[0], last_point, QgsPointXY(pt.x(), pt.y()), self.vertices[0]]
 
             poly_geo = QgsGeometry.fromPolygonXY([points])
 
@@ -146,16 +146,12 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # geometry depends on capture mode
         if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) <= 2):
-            points = [last_point, QgsPointXY(pt.x(), pt.y())]
+            points = [last_point, pt]
             self.rb.setToGeometry(
                 QgsGeometry.fromPolylineXY(points),
                 None
             )
         elif self.mode() == QgsMapToolCapture.CapturePolygon:
-            # points = [ QgsPointXY(v.x(), v.y()) for v in self.vertices[:last_point_idx] ]
-            # Close it!
-            # points += [ QgsPointXY(last_point.x(), last_point.y()), QgsPointXY(pt.x(), pt.y()), points[0]]
-
             self.rb.setToGeometry(
                 poly_geo,
                 None
