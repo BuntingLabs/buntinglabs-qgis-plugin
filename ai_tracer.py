@@ -19,6 +19,22 @@ def get_complement(color):
     # Return the complement color
     return QColor(comp_r, comp_g, comp_b, a)
 
+# line_segment_idx is zero-indexed to the start coordinate
+def find_closest_projection_point(pts, pt):
+    min_distance = float('inf')
+    projected_pt = None
+    line_segment_index = None
+    for i in range(len(pts) - 1):
+        start, end = pts[i], pts[i+1]
+        segment = QgsGeometry.fromPolylineXY([start, end])
+        projected_point = segment.nearestPoint(QgsGeometry.fromPointXY(pt))
+        distance = pt.distance(projected_point.asPoint())
+        if distance < min_distance:
+            min_distance = distance
+            projected_pt = projected_point.asPoint()
+            line_segment_index = i
+    return QgsPointXY(projected_pt), line_segment_index
+
 # QgsMapToolCapture is a subclass of QgsMapToolEdit that provides
 # additional functionality for map tools that capture geometry. It
 # is an abstract base class for map tools that capture line and
@@ -83,23 +99,21 @@ class AIVectorizerTool(QgsMapToolCapture):
         pt = self.toMapCoordinates(pos)
 
         # Return the geometry prior
-        last_point_idx = sorted(enumerate(self.vertices), key=lambda v: (v[1].x()-pt.x())**2 + (v[1].y()-pt.y())**2)[0][0]
-
-        # Find the closest point
-        last_point = QgsPointXY(self.vertices[last_point_idx].x(), self.vertices[last_point_idx].y())
+        assert len(self.vertices) >= 2
+        last_point, last_point_idx = find_closest_projection_point(self.vertices, pt)
 
         # Geometry for polygon
-        points = [ QgsPointXY(v.x(), v.y()) for v in self.vertices[:last_point_idx] ]
-        # Close it!
-        points += [ QgsPointXY(last_point.x(), last_point.y()), QgsPointXY(pt.x(), pt.y()), points[0]]
-
+        points = self.vertices[:last_point_idx+1] + [ last_point, pt, self.vertices[0] ]
         poly_geo = QgsGeometry.fromPolygonXY([points])
 
         if trimToPoint:
-            numToTrim = len(self.vertices)-last_point_idx
+            numToTrim = len(self.vertices)-last_point_idx-1
             for _ in range(numToTrim):
                 self.undo()
             self.vertices = self.vertices[:-numToTrim]
+            # After trimming, add back our projected point
+            self.addVertex(last_point)
+            self.vertices.append(last_point)
 
         return (last_point, poly_geo)
 
