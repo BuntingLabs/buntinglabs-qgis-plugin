@@ -72,14 +72,9 @@ class AIVectorizerTool(QgsMapToolCapture):
             raise ValueError
 
         rb.setFillColor(self.digitizingFillColor())
-        rb.setColor(self.digitizingStrokeColor())
+        rb.setStrokeColor(self.digitizingStrokeColor())
         rb.setWidth(self.digitizingStrokeWidth())
         rb.setLineStyle(Qt.DotLine)
-
-        color = self.digitizingStrokeColor()
-
-        alpha_scale = QSettings().value("Qgis/digitizing/line_color_alpha_scale", 1.0, type=float)
-        color.setAlphaF(color.alphaF() * alpha_scale)
 
         return rb
 
@@ -132,7 +127,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             # Use complement color
             self.rb.setFillColor(get_complement(self.digitizingFillColor()))
-            self.rb.setColor(get_complement(self.digitizingStrokeColor()))
+            self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
         else:
             last_point = self.vertices[-1]
 
@@ -142,7 +137,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             poly_geo = QgsGeometry.fromPolygonXY([points])
 
             self.rb.setFillColor(self.digitizingFillColor())
-            self.rb.setColor(self.digitizingStrokeColor())
+            self.rb.setStrokeColor(self.digitizingStrokeColor())
 
         # geometry depends on capture mode
         if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) <= 2):
