@@ -67,8 +67,8 @@ class AutocompleteTask(QgsTask):
                 print(f"Resolution in Y direction: {y_res}")
 
         # Size of the rectangle in the CRS coordinates
-        # 800 is the number of pixels we want to render
-        img_width, img_height = 800, 800
+        # 1200 is the number of pixels we want to render
+        img_width, img_height = 1200, 1200
         x_size = img_width * x_res
         y_size = img_height * y_res
 
