@@ -10,6 +10,15 @@ from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
 
 from .tracing_task import AutocompleteTask
 
+def get_complement(color):
+    r, g, b, a = color.red(), color.green(), color.blue(), color.alpha()
+    # Calculate the complement
+    comp_r = 255 - r
+    comp_g = 255 - g
+    comp_b = 255 - b
+    # Return the complement color
+    return QColor(comp_r, comp_g, comp_b, a)
+
 # QgsMapToolCapture is a subclass of QgsMapToolEdit that provides
 # additional functionality for map tools that capture geometry. It
 # is an abstract base class for map tools that capture line and
@@ -106,6 +115,10 @@ class AIVectorizerTool(QgsMapToolCapture):
         if e.modifiers() & Qt.ShiftModifier:
             # Shift means our last vertex should effectively be the closest point to the line
             (last_point, poly_geo) = self.shiftClickAdjustment(e.pos())
+
+            # Use complement color
+            self.rb.setFillColor(get_complement(self.digitizingFillColor()))
+            self.rb.setColor(get_complement(self.digitizingStrokeColor()))
         else:
             last_point = QgsPointXY(self.vertices[-1].x(), self.vertices[-1].y())
 
@@ -113,6 +126,9 @@ class AIVectorizerTool(QgsMapToolCapture):
             points = self.vertices + [ QgsPointXY(pt.x(), pt.y()), self.vertices[0]]
 
             poly_geo = QgsGeometry.fromPolygonXY([points])
+
+            self.rb.setFillColor(self.digitizingFillColor())
+            self.rb.setColor(self.digitizingStrokeColor())
 
         # geometry depends on capture mode
         if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) <= 2):
