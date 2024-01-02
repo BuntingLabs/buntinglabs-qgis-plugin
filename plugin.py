@@ -110,6 +110,9 @@ class BuntingLabsPlugin:
             self.deactivate()
 
     def deactivate(self):
+        if isinstance(self.tracer, AIVectorizerTool):
+            self.tracer.deactivate()
+
         self.action.setChecked(False)
         self.tracer = None
 
