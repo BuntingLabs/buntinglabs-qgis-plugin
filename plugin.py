@@ -27,21 +27,28 @@ class BuntingLabsPlugin:
         # Set by the text box in save settings
         self.api_key_input = None
 
+        self.action = None
         self.tracer = None
 
-    def current_layer_change_event(self, layer):
-        # TODO why do we have layer argument, then override it?
-        # if the current layer is editable, or becomes editable in the future,
-        # switch our plugin status
-        layer = self.iface.activeLayer()
-        if isinstance(layer, QgsVectorLayer):
-            self.initTracer()
-            self.action.setEnabled(layer is not None and layer.isEditable())
+    def update_checkable(self):
+        if self.action is None:
+            return
 
-            layer.editingStarted.connect(lambda: self.current_layer_change_event(layer))
-            layer.editingStopped.connect(lambda: self.current_layer_change_event(layer))
+        layer = self.iface.activeLayer()
+
+        if layer is not None and isinstance(layer, QgsVectorLayer) and layer.isEditable():
+            self.action.setEnabled(True)
         else:
             self.action.setEnabled(False)
+
+    def current_layer_change_event(self, layer):
+        # if the current layer is editable, or becomes editable in the future,
+        # switch our plugin status
+        if isinstance(layer, QgsVectorLayer):
+            layer.editingStarted.connect(self.update_checkable)
+            layer.editingStopped.connect(self.update_checkable)
+
+        self.update_checkable()
 
     def initTracer(self):
         self.tracer = None
@@ -72,7 +79,7 @@ class BuntingLabsPlugin:
         self.iface.mapCanvas().mapToolSet.connect(self.onMapToolChanged)
 
         # Trigger a current layer change event to get the right action
-        self.current_layer_change_event(None)
+        self.current_layer_change_event(self.iface.activeLayer())
 
     def openSettings(self):
         # Create a closeable modal for API key input
