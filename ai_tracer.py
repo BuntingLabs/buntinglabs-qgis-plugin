@@ -6,7 +6,7 @@ from qgis.PyQt.QtGui import QColor
 from qgis.gui import QgsMapToolCapture, QgsRubberBand
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
-    QgsPoint, QgsWkbTypes
+    QgsPoint, QgsWkbTypes, QgsLayerTreeLayer
 
 from .tracing_task import AutocompleteTask
 
@@ -217,7 +217,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             # Create our autocomplete task if we have >=2 vertices
             if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier):
                 root = QgsProject.instance().layerTreeRoot()
-                rlayers = [node.layer() for node in root.children() if isinstance(node.layer(), QgsRasterLayer) and node.itemVisibilityChecked()]
+                rlayers = [node.layer() for node in root.children() if isinstance(node, QgsLayerTreeLayer) and isinstance(node.layer(), QgsRasterLayer) and node.itemVisibilityChecked()]
                 vlayer = self.plugin.iface.activeLayer()
 
                 project_crs = QgsProject.instance().crs()
