@@ -66,6 +66,10 @@ class AutocompleteTask(QgsTask):
                 print(f"Resolution in X direction: {x_res}")
                 print(f"Resolution in Y direction: {y_res}")
 
+        if len(self.rlayers) == 0 or primaryrlayer is None:
+            self.errorReceived.emit('No raster layers are visible. Load a GeoTIFF to use autocomplete.')
+            return False
+
         # Size of the rectangle in the CRS coordinates
         # 1200 is the number of pixels we want to render
         img_width, img_height = 1200, 1200
