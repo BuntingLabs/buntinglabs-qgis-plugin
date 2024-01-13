@@ -5,6 +5,7 @@ import os
 import http.client
 import json
 from osgeo import gdal, osr
+import numpy as np
 
 from qgis.core import QgsTask, QgsMapSettings, QgsMapRendererCustomPainterJob, \
     QgsCoordinateTransform, QgsProject, QgsRectangle
@@ -92,7 +93,10 @@ class AutocompleteTask(QgsTask):
         y_max = cy + y_size / 2
 
         # create image
-        img = QImage(QSize(img_width, img_height), QImage.Format_ARGB32_Premultiplied)
+        # Format_RGB888 is 24-bit (8 bits each) for each color channel, unlike
+        # Format_RGB32 which by default has 0xff on the alpha channel, and screws
+        # up reading it into GDAL!
+        img = QImage(QSize(img_width, img_height), QImage.Format_RGB888)
 
         # white is most canonically background
         color = QColor(255, 255, 255)
@@ -116,19 +120,15 @@ class AutocompleteTask(QgsTask):
         render.waitForFinished()
         p.end()
 
+        # Convert QImage to np.array
+        ptr = img.bits()
+        ptr.setsize(img.height() * img.width() * 3)
+        img_np = np.frombuffer(ptr, np.uint8).reshape((img.height(), img.width(), 3))
+
         # Create temporary files for png and tif images
-        with tempfile.NamedTemporaryFile(suffix=".png") as png_temp, \
-             tempfile.NamedTemporaryFile(suffix=".tif") as tif_temp:
-
-            # Save the image to the temporary png file
-            img.save(png_temp.name, "png")
-
-            # Print png_temp.name's size and filename
-            print(f'PNG file size: {os.path.getsize(png_temp.name)} bytes')
-            print(f'PNG file name: {png_temp.name}')
-
+        with tempfile.NamedTemporaryFile(suffix=".tif") as tif_temp:
             # Call the function to convert the png to tif and save it to the temporary tif file
-            georeference_png_to_tiff(png_temp.name, tif_temp.name, mapEpsgCode, x_min, y_max, x_max, y_min)
+            georeference_img_to_tiff(img_np, tif_temp.name, mapEpsgCode, x_min, y_max, x_max, y_min)
 
             # Prepare the image payload
             with open(tif_temp.name, 'rb') as f:
@@ -247,17 +247,16 @@ def convert_indxs_to_coords(rlayer, ij):
     y = top_left_y - i * dy
     return x, y
 
-def georeference_png_to_tiff(png_file, tiff_file, epsg, x_min, y_min, x_max, y_max):
+def georeference_img_to_tiff(img_np, tiff_file, epsg, x_min, y_min, x_max, y_max):
     # Open the PNG file
-    src = gdal.Open(png_file, gdal.GA_ReadOnly)
-    src_img = src.ReadAsArray()
+    (rasterYSize, rasterXSize, rasterCount) = img_np.shape
 
     # Create a new GeoTIFF file
-    dst = gdal.GetDriverByName('GTiff').Create(tiff_file, src.RasterXSize, src.RasterYSize, src.RasterCount,
+    dst = gdal.GetDriverByName('GTiff').Create(tiff_file, rasterXSize, rasterYSize, rasterCount,
                                                gdal.GDT_Byte, options=["COMPRESS=JPEG"])
 
     # Set the geotransform
-    geotransform = [x_min, (x_max-x_min)/src.RasterXSize, 0, y_min, 0, (y_max-y_min)/src.RasterYSize]
+    geotransform = [x_min, (x_max-x_min)/rasterXSize, 0, y_min, 0, (y_max-y_min)/rasterYSize]
     dst.SetGeoTransform(geotransform)
 
     # Set the projection
@@ -266,10 +265,9 @@ def georeference_png_to_tiff(png_file, tiff_file, epsg, x_min, y_min, x_max, y_m
     dst.SetProjection(srs.ExportToWkt())
 
     # Write the array data to the raster bands
-    for b in range(src.RasterCount):
+    for b in range(rasterCount):
         band = dst.GetRasterBand(b + 1)
-        band.WriteArray(src_img[b])
+        band.WriteArray(img_np[:, :, b])
 
     # Close the files
-    src = None
     dst = None
