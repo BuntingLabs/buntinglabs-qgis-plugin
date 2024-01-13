@@ -1,6 +1,5 @@
 # Copyright 2023 Bunting Labs, Inc.
 
-import tempfile
 import os
 import http.client
 import json
@@ -125,14 +124,8 @@ class AutocompleteTask(QgsTask):
         ptr.setsize(img.height() * img.width() * 3)
         img_np = np.frombuffer(ptr, np.uint8).reshape((img.height(), img.width(), 3))
 
-        # Create temporary files for png and tif images
-        with tempfile.NamedTemporaryFile(suffix=".tif") as tif_temp:
-            # Call the function to convert the png to tif and save it to the temporary tif file
-            georeference_img_to_tiff(img_np, tif_temp.name, mapEpsgCode, x_min, y_max, x_max, y_min)
-
-            # Prepare the image payload
-            with open(tif_temp.name, 'rb') as f:
-                img_data = f.read()
+        # Call the function to convert the image to a geotiff tif and save it as bytes
+        tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_max, x_max, y_min)
 
         i_min, j_min = convert_coords_to_indxs(primaryrlayer, (x_min, y_max))
         i0, j0 = convert_coords_to_indxs(primaryrlayer, (x0, y0))
@@ -152,7 +145,7 @@ class AutocompleteTask(QgsTask):
             'Content-Disposition: form-data; name="image"; filename="rendered.tif"',
             'Content-Type: application/octet-stream',
             '',
-            img_data,
+            tif_data,
             '--' + boundary,
             'Content-Disposition: form-data; name="vector"; filename="vector.json"',
             'Content-Type: application/json',
@@ -247,12 +240,12 @@ def convert_indxs_to_coords(rlayer, ij):
     y = top_left_y - i * dy
     return x, y
 
-def georeference_img_to_tiff(img_np, tiff_file, epsg, x_min, y_min, x_max, y_max):
+def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
     # Open the PNG file
     (rasterYSize, rasterXSize, rasterCount) = img_np.shape
 
-    # Create a new GeoTIFF file
-    dst = gdal.GetDriverByName('GTiff').Create(tiff_file, rasterXSize, rasterYSize, rasterCount,
+    # Create a new GeoTIFF file in memory
+    dst = gdal.GetDriverByName('GTiff').Create('/vsimem/bunting_qgis_tracer.tif', rasterXSize, rasterYSize, rasterCount,
                                                gdal.GDT_Byte, options=["COMPRESS=JPEG"])
 
     # Set the geotransform
@@ -271,3 +264,16 @@ def georeference_img_to_tiff(img_np, tiff_file, epsg, x_min, y_min, x_max, y_max
 
     # Close the files
     dst = None
+
+    # Return the GeoTIFF-encoded memory contents as a byte array
+    f = gdal.VSIFOpenL('/vsimem/bunting_qgis_tracer.tif', 'rb')
+    gdal.VSIFSeekL(f, 0, os.SEEK_END)
+    size = gdal.VSIFTellL(f)
+    gdal.VSIFSeekL(f, 0, os.SEEK_SET)
+    data = gdal.VSIFReadL(1, size, f)
+    gdal.VSIFCloseL(f)
+
+    # Delete the temporary file
+    gdal.Unlink('/vsimem/bunting_qgis_tracer.tif')
+
+    return data
