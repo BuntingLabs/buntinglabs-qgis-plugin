@@ -201,7 +201,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.stopCapturing()
             self.rb.reset()
         elif e.button() == Qt.LeftButton:
-            if e.modifiers() & Qt.ShiftModifier:
+            if len(self.vertices) >= 2 and (e.modifiers() & Qt.ShiftModifier):
                 self.shiftClickAdjustment(e.pos(), trimToPoint=True)
 
             # QgsPointXY with map CRS
