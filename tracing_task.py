@@ -7,7 +7,7 @@ from osgeo import gdal, osr
 import numpy as np
 
 from qgis.core import QgsTask, QgsMapSettings, QgsMapRendererCustomPainterJob, \
-    QgsCoordinateTransform, QgsProject, QgsRectangle
+    QgsCoordinateTransform, QgsProject, QgsRectangle, Qgis
 from qgis.PyQt.QtGui import QImage, QPainter, QColor
 from qgis.PyQt.QtCore import QSize, pyqtSignal
 
@@ -136,7 +136,10 @@ class AutocompleteTask(QgsTask):
         })
 
         options_payload = json.dumps({
-            'num_completions': self.tracing_tool.num_completions
+            'num_completions': self.tracing_tool.num_completions,
+            'qgis_version': Qgis.QGIS_VERSION,
+            'plugin_version': self.tracing_tool.plugin.plugin_version,
+            'proj_epsg': mapEpsgCode
         })
 
         boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'

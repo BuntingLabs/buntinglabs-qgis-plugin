@@ -30,6 +30,16 @@ class BuntingLabsPlugin:
         self.action = None
         self.tracer = None
 
+        # Read the plugin version
+        try:
+            plugin_metadata = os.path.join(os.path.dirname(__file__), "metadata.txt")
+            with open(plugin_metadata, 'r') as f:
+                for line in f.readlines():
+                    if line.startswith('version='):
+                        self.plugin_version = line.split('=')[1].strip()
+        except:
+            self.plugin_version = 'N/A'
+
     def update_checkable(self):
         if self.action is None:
             return
