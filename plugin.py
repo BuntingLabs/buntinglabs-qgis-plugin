@@ -80,7 +80,7 @@ class BuntingLabsPlugin:
         # Initialize the plugin GUI
         icon_path = os.path.join(os.path.dirname(__file__), "vectorizing_icon.png")
 
-        self.action = QAction(QIcon(icon_path), 'Vectorize with AI', self.iface.mainWindow())
+        self.action = QAction(QIcon(icon_path), '<b>Vectorize with AI</b><p>Toggle editing on a vector layer then enable to autocomplete new geometries.</p>', self.iface.mainWindow())
         self.action.setCheckable(True)
         self.action.triggered.connect(self.toolbarClick)
         self.iface.addToolBarIcon(self.action)
