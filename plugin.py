@@ -40,6 +40,8 @@ class BuntingLabsPlugin:
         except:
             self.plugin_version = 'N/A'
 
+        self.settings_action = None
+
     def update_checkable(self):
         if self.action is None:
             return
@@ -91,6 +93,16 @@ class BuntingLabsPlugin:
         # Trigger a current layer change event to get the right action
         self.current_layer_change_event(self.iface.activeLayer())
 
+        # Let the user change settings
+        self.settings_action = QAction(
+            QIcon(":images/themes/default/console/iconSettingsConsole.svg"),
+            'Edit Settings',
+            self.iface.mainWindow()
+        )
+
+        self.settings_action.triggered.connect(self.openSettings)
+        self.iface.addPluginToMenu('Bunting Labs', self.settings_action)
+
     def openSettings(self):
         # Create a closeable modal for API key input
         self.api_key_dialog = QDialog(self.iface.mainWindow())
@@ -124,6 +136,9 @@ class BuntingLabsPlugin:
         self.api_key_dialog.close()
 
     def unload(self):
+        if self.settings_action is not None:
+            self.iface.removePluginMenu('Bunting Labs', self.settings_action)
+
         self.iface.removeToolBarIcon(self.action)
 
     def onMapToolChanged(self, newTool, _):
