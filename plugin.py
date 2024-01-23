@@ -70,12 +70,12 @@ class BuntingLabsPlugin:
         if isinstance(vlayer, QgsVectorLayer):
             if vlayer.wkbType() in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString]:
                 self.tracer = AIVectorizerTool(self, QgsMapToolCapture.CaptureLine)
-            elif vlayer.wkbType() == QgsWkbTypes.Polygon:
+            elif vlayer.wkbType() in [QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
                 self.tracer = AIVectorizerTool(self, QgsMapToolCapture.CapturePolygon)
             else:
                 self.iface.messageBar().pushMessage(
                     "Error",
-                    "Unknown vector layer type.",
+                    "Unsupported vector layer type for AI autocomplete.",
                     Qgis.Critical)
 
     def initGui(self):
