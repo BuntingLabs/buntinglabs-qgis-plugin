@@ -5,7 +5,8 @@ from enum import Enum
 from qgis.PyQt.QtCore import Qt, QSettings
 from qgis.PyQt.QtWidgets import QPushButton
 from qgis.PyQt.QtGui import QColor
-from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsVertexMarker
+from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsVertexMarker, \
+    QgsSnapIndicator
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
     QgsPoint, QgsWkbTypes, QgsLayerTreeLayer
@@ -78,6 +79,10 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.scissors_icon.setPenWidth(5)
         self.scissors_icon.setZValue(1000)
 
+        # For snapping
+        self.snapIndicator = QgsSnapIndicator(plugin.iface.mapCanvas())
+        self.snapper = plugin.iface.mapCanvas().snappingUtils()
+
     def initRubberBand(self, mode):
         if mode == QgsMapToolCapture.CaptureLine:
             rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.LineGeometry)
@@ -105,8 +110,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.addVertex(QgsPointXY(*args[0]))
         self.vertices.append(QgsPointXY(*args[0]))
 
-    def shiftClickAdjustment(self, pos, trimToPoint=False):
-        pt = self.toMapCoordinates(pos)
+    def shiftClickAdjustment(self, pt, trimToPoint=False):
 
         # Return the geometry prior
         assert len(self.vertices) >= 2
@@ -136,16 +140,23 @@ class AIVectorizerTool(QgsMapToolCapture):
         return self.shift_state == ShiftClickState.HAS_NOT_CUT and not wouldCutToEnd
 
     def canvasMoveEvent(self, e):
+        if self.isAutoSnapEnabled():
+            snapMatch = self.snapper.snapToMap(e.pos())
+            self.snapIndicator.setMatch(snapMatch)
+
         if len(self.vertices) == 0:
             # Nothing to do!
             return
 
-        pt = self.toMapCoordinates(e.pos())
+        if self.snapIndicator.match().type():
+            pt = self.snapIndicator.match().point()
+        else:
+            pt = self.toMapCoordinates(e.pos())
 
         # Check if the shift key is being pressed
         # We have special existing-line-editing mode when shift is hit
         if e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
-            (last_point, poly_geo) = self.shiftClickAdjustment(e.pos())
+            (last_point, poly_geo) = self.shiftClickAdjustment(pt)
 
             if self.isCutting(last_point):
                 # Shift means our last vertex should effectively be the closest point to the line
@@ -239,8 +250,14 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.stopCapturing()
             self.rb.reset()
         elif e.button() == Qt.LeftButton:
+            # QgsPointXY with map CRS
+            if self.snapIndicator.match().type():
+                point = self.snapIndicator.match().point()
+            else:
+                point = self.toMapCoordinates(e.pos())
+
             if len(self.vertices) >= 2 and (e.modifiers() & Qt.ShiftModifier) and self.shift_state == ShiftClickState.HAS_NOT_CUT:
-                self.shiftClickAdjustment(e.pos(), trimToPoint=True)
+                self.shiftClickAdjustment(point, trimToPoint=True)
                 # Only trim once, then we're completing
                 self.shift_state = ShiftClickState.HAS_CUT
                 return
@@ -248,9 +265,6 @@ class AIVectorizerTool(QgsMapToolCapture):
             # Left clicking without shift resets us to normal autocomplete mode
             if not (e.modifiers() & Qt.ShiftModifier):
                 self.shift_state = ShiftClickState.HAS_NOT_CUT
-
-            # QgsPointXY with map CRS
-            point = self.toMapCoordinates(e.pos())
 
             self.addVertex(point)
             self.vertices.append(point)
