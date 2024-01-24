@@ -1,9 +1,11 @@
 # Copyright 2023 Bunting Labs, Inc.
 
+from enum import Enum
+
 from qgis.PyQt.QtCore import Qt, QSettings
 from qgis.PyQt.QtWidgets import QPushButton
 from qgis.PyQt.QtGui import QColor
-from qgis.gui import QgsMapToolCapture, QgsRubberBand
+from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsVertexMarker
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
     QgsPoint, QgsWkbTypes, QgsLayerTreeLayer
@@ -35,6 +37,10 @@ def find_closest_projection_point(pts, pt):
             line_segment_index = i
     return QgsPointXY(projected_pt), line_segment_index
 
+class ShiftClickState(Enum):
+    HAS_NOT_CUT = 1
+    HAS_CUT = 2
+
 # QgsMapToolCapture is a subclass of QgsMapToolEdit that provides
 # additional functionality for map tools that capture geometry. It
 # is an abstract base class for map tools that capture line and
@@ -62,6 +68,15 @@ class AIVectorizerTool(QgsMapToolCapture):
         # Capturing mode determines whether or not the rubber band
         # will follow the moving cursor, once there's a vertex in the chamber
         self.startCapturing()
+
+        self.shift_state = ShiftClickState.HAS_NOT_CUT
+
+        self.scissors_icon = QgsVertexMarker(plugin.iface.mapCanvas())
+        self.scissors_icon.setIconType(QgsVertexMarker.ICON_X)
+        self.scissors_icon.setColor(get_complement(self.digitizingStrokeColor()))
+        self.scissors_icon.setIconSize(18)
+        self.scissors_icon.setPenWidth(5)
+        self.scissors_icon.setZValue(1000)
 
     def initRubberBand(self, mode):
         if mode == QgsMapToolCapture.CaptureLine:
@@ -112,6 +127,14 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         return (last_point, poly_geo)
 
+    def isCutting(self, last_point):
+        # Returns whether or not we are in cutting mode or draw forwards mode.
+        # If this would cut to the end of the line, though, of course we would not
+        # cut there, as it's a no-op.
+        wouldCutToEnd = last_point.distance(self.vertices[-1]) < 1e-8
+
+        return self.shift_state == ShiftClickState.HAS_NOT_CUT and not wouldCutToEnd
+
     def canvasMoveEvent(self, e):
         if len(self.vertices) == 0:
             # Nothing to do!
@@ -120,16 +143,31 @@ class AIVectorizerTool(QgsMapToolCapture):
         pt = self.toMapCoordinates(e.pos())
 
         # Check if the shift key is being pressed
-        # We hide the geometry rubber band when the shift button goes down
+        # We have special existing-line-editing mode when shift is hit
         if e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
-            # Shift means our last vertex should effectively be the closest point to the line
             (last_point, poly_geo) = self.shiftClickAdjustment(e.pos())
 
-            # Use complement color
-            self.rb.setFillColor(get_complement(self.digitizingFillColor()))
-            self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
+            if self.isCutting(last_point):
+                # Shift means our last vertex should effectively be the closest point to the line
+                self.scissors_icon.setCenter(last_point)
+                self.scissors_icon.show()
+
+                # Hide the rubber band
+                self.rb.reset()
+
+                return
+            else:
+                # We've already cut, so now we're drawing lines without autocomplete.
+                last_point = self.vertices[-1]
+                self.scissors_icon.hide()
+
+                # Use complement color
+                self.rb.setFillColor(get_complement(self.digitizingFillColor()))
+                self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
         else:
             last_point = self.vertices[-1]
+
+            self.scissors_icon.hide()
 
             # Close it!
             points = [ self.vertices[0], last_point, QgsPointXY(pt.x(), pt.y()), self.vertices[0]]
@@ -201,8 +239,15 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.stopCapturing()
             self.rb.reset()
         elif e.button() == Qt.LeftButton:
-            if len(self.vertices) >= 2 and (e.modifiers() & Qt.ShiftModifier):
+            if len(self.vertices) >= 2 and (e.modifiers() & Qt.ShiftModifier) and self.shift_state == ShiftClickState.HAS_NOT_CUT:
                 self.shiftClickAdjustment(e.pos(), trimToPoint=True)
+                # Only trim once, then we're completing
+                self.shift_state = ShiftClickState.HAS_CUT
+                return
+
+            # Left clicking without shift resets us to normal autocomplete mode
+            if not (e.modifiers() & Qt.ShiftModifier):
+                self.shift_state = ShiftClickState.HAS_NOT_CUT
 
             # QgsPointXY with map CRS
             point = self.toMapCoordinates(e.pos())
@@ -238,3 +283,5 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def deactivate(self):
         self.rb.reset()
+
+        self.scissors_icon.hide()
