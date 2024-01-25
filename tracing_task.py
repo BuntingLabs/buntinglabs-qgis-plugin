@@ -120,17 +120,21 @@ class AutocompleteTask(QgsTask):
         render.waitForFinished()
         p.end()
 
-        # Convert QImage to np.array
-        ptr = img.bits()
-        ptr.setsize(img.height() * img.width() * 3)
-        img_np = np.frombuffer(ptr, np.uint8).reshape((img.height(), img.width(), 3))
+        try:
+            # Convert QImage to np.array
+            ptr = img.bits()
+            ptr.setsize(img.height() * img.width() * 3)
+            img_np = np.frombuffer(ptr, np.uint8).reshape((img.height(), img.width(), 3))
 
-        # Call the function to convert the image to a geotiff tif and save it as bytes
-        tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_max, x_max, y_min)
+            # Call the function to convert the image to a geotiff tif and save it as bytes
+            tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_max, x_max, y_min)
 
-        i_min, j_min = convert_coords_to_indxs(primaryrlayer, (x_min, y_max))
-        i0, j0 = convert_coords_to_indxs(primaryrlayer, (x0, y0))
-        i1, j1 = convert_coords_to_indxs(primaryrlayer, (x1, y1))
+            i_min, j_min = convert_coords_to_indxs(primaryrlayer, (x_min, y_max))
+            i0, j0 = convert_coords_to_indxs(primaryrlayer, (x0, y0))
+            i1, j1 = convert_coords_to_indxs(primaryrlayer, (x1, y1))
+        except Exception as e:
+            self.errorReceived.emit(str(e))
+            return False
 
         vector_payload = json.dumps({
             'coordinates': [[i0-i_min, j0-j_min], [i1-i_min, j1-j_min]]
@@ -271,6 +275,13 @@ def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
 
     # Return the GeoTIFF-encoded memory contents as a byte array
     f = gdal.VSIFOpenL('/vsimem/bunting_qgis_tracer.tif', 'rb')
+    # Because we use the same /vsimem/ URI for each query, double clicking quickly
+    # can result in a race condition in georeference_img_to_tiff where it gets .Unlink()'ed
+    # before the above open call. This means we get a null pointer here. TODO solve
+    # more elegantly, but for now, we'll error out.
+    if f is None:
+        raise RuntimeError("Autocomplete was used too quickly, please wait a second between requests.")
+
     gdal.VSIFSeekL(f, 0, os.SEEK_END)
     size = gdal.VSIFTellL(f)
     gdal.VSIFSeekL(f, 0, os.SEEK_SET)
