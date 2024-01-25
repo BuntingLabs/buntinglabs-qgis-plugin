@@ -249,7 +249,7 @@ def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
 
     # Create a new GeoTIFF file in memory
     dst = gdal.GetDriverByName('GTiff').Create('/vsimem/bunting_qgis_tracer.tif', rasterXSize, rasterYSize, rasterCount,
-                                               gdal.GDT_Byte, options=["COMPRESS=JPEG"])
+                                               gdal.GDT_Byte, options=["COMPRESS=JPEG", "QUALITY=85"])
 
     # Set the geotransform
     geotransform = [x_min, (x_max-x_min)/rasterXSize, 0, y_min, 0, (y_max-y_min)/rasterYSize]
