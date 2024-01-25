@@ -77,7 +77,8 @@ class AutocompleteTask(QgsTask):
         y_size = img_height * y_res
 
         if x_size <= 0 or y_size <= 0:
-            raise ValueError
+            self.errorReceived.emit('Could not render an image from the rasters (this is a plugin bug!).')
+            return False
         assert primaryrlayer is not None
 
         # i = y, j = x
