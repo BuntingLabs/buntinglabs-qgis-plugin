@@ -74,9 +74,10 @@ class BuntingLabsPlugin:
                 self.tracer = AIVectorizerTool(self, QgsMapToolCapture.CapturePolygon)
             else:
                 self.iface.messageBar().pushMessage(
-                    "Error",
+                    "Bunting Labs AI Vectorizer",
                     "Unsupported vector layer type for AI autocomplete.",
-                    Qgis.Critical)
+                    Qgis.Warning,
+                    duration=15)
 
     def initGui(self):
         # Initialize the plugin GUI
@@ -131,7 +132,12 @@ class BuntingLabsPlugin:
         api_key = self.api_key_input.text()
         self.settings.setValue("buntinglabs-qgis-plugin/api_key", api_key)
 
-        self.iface.messageBar().pushMessage("Success", "API key changed successfully.", Qgis.Info, duration=10)
+        self.iface.messageBar().pushMessage(
+            "Bunting Labs AI Vectorizer",
+            "Settings saved successfully.",
+            Qgis.Info,
+            duration=10
+        )
 
         self.api_key_dialog.close()
 

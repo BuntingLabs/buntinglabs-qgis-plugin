@@ -221,9 +221,10 @@ class AIVectorizerTool(QgsMapToolCapture):
             vlayer = self.plugin.iface.activeLayer()
             if not isinstance(vlayer, QgsVectorLayer):
                 self.plugin.iface.messageBar().pushMessage(
-                    "Info",
+                    "Bunting Labs AI Vectorizer",
                     "No active vector layer.",
-                    Qgis.Info)
+                    Qgis.Warning,
+                    duration=15)
                 return
 
             # Will be converted to the relevant geometry
