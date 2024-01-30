@@ -60,6 +60,11 @@ class BuntingLabsPlugin:
         if self.action is None:
             return
 
+        # Before onboarding, it's always checkable.
+        if self.settings.value(SETTING_TOS, "") != "y" or self.settings.value(SETTING_API_TOKEN, "") == "":
+            self.action.setEnabled(True)
+            return
+
         layer = self.iface.activeLayer()
 
         if layer is not None and isinstance(layer, QgsVectorLayer) and layer.isEditable():
@@ -117,13 +122,6 @@ class BuntingLabsPlugin:
 
         self.settings_action.triggered.connect(self.openSettings)
         self.iface.addPluginToMenu('Bunting Labs', self.settings_action)
-
-        # Depending on how many settings someone has already set,
-        # we'll need to revisit the onboarding flow.
-        if self.settings.value(SETTING_TOS, "") != "y":
-            self.openTOSDialog()
-        elif self.settings.value(SETTING_API_TOKEN, "") == "":
-            self.openEmailDialog()
 
     # There are five dialogs in our onboarding flow.
     # 1. TOS dialog, requesting consent to our terms.
@@ -498,6 +496,17 @@ class BuntingLabsPlugin:
 
     def toolbarClick(self):
         if self.action.isChecked():
+            # Depending on how many settings someone has already set,
+            # we'll need to revisit the onboarding flow.
+            if self.settings.value(SETTING_TOS, "") != "y":
+                self.action.setChecked(False)
+                self.openTOSDialog()
+                return
+            elif self.settings.value(SETTING_API_TOKEN, "") == "":
+                self.action.setChecked(False)
+                self.openEmailDialog()
+                return
+
             self.initTracer()
             self.iface.mapCanvas().setMapTool(self.tracer)
 
