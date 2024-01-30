@@ -62,7 +62,6 @@ class EmailRegisterTask(QgsTask):
             else:
                 QgsMessageLog.logMessage('Email registration task "{}" Exception: {}'.format(self.description(), self.exception),
                                          MESSAGE_CATEGORY, Qgis.Critical)
-                raise self.exception
 
     def cancel(self):
         QgsMessageLog.logMessage('Email registration task "{}" was canceled'.format(self.description()),
