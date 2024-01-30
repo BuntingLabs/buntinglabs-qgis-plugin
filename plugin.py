@@ -1,16 +1,30 @@
 # Copyright 2023 Bunting Labs, Inc.
 
 import os
+import string
+import random
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, \
-    QPushButton, QAction
-from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import QSettings
+    QPushButton, QAction, QHBoxLayout, QCheckBox
+from PyQt5.QtGui import QIcon, QMovie, QPixmap
+from PyQt5.QtCore import QSettings, Qt
 
-from qgis.core import Qgis, QgsVectorLayer, QgsWkbTypes
+from qgis.core import Qgis, QgsApplication, QgsVectorLayer, QgsWkbTypes
 from qgis.gui import QgsMapToolCapture
 
+from PyQt5.QtCore import QSize
+
 from .ai_tracer import AIVectorizerTool
+from .login_check_task import EmailRegisterTask, ValidateEmailTask
+from .onboarding_widget import OnboardingHeaderWidget
+
+
+# Settings for QGIS
+SETTING_API_TOKEN = "buntinglabs-qgis-plugin/api_key"
+SETTING_TOS = "buntinglabs-qgis-plugin/terms_of_service_state"
+
+def generate_random_api_key():
+    return ''.join(random.choice(string.ascii_uppercase + string.ascii_lowercase + string.digits) for _ in range(12))
 
 class BuntingLabsPlugin:
     # This plugin class contains strictly things that interface with
@@ -104,24 +118,349 @@ class BuntingLabsPlugin:
         self.settings_action.triggered.connect(self.openSettings)
         self.iface.addPluginToMenu('Bunting Labs', self.settings_action)
 
+        # Depending on how many settings someone has already set,
+        # we'll need to revisit the onboarding flow.
+        if self.settings.value(SETTING_TOS, "") != "y":
+            self.openTOSDialog()
+        elif self.settings.value(SETTING_API_TOKEN, "") == "":
+            self.openEmailDialog()
+
+    # There are five dialogs in our onboarding flow.
+    # 1. TOS dialog, requesting consent to our terms.
+    # 2. Email dialog, asking for the email of their account.
+    # 3. Confirm dialog, where our auto-generated API key can be confirmed.
+    # 4. Token dialog, when the API key must be generated from the dashboard.
+    # 5. Instructions dialog, onboarding them.
+    # Let's create each of these.
+
+    # 1. TOS dialog, which leads to email dialog if accepted.
+    def openTOSDialog(self):
+        tos_dialog = QDialog(self.iface.mainWindow())
+        tos_dialog.setWindowTitle("Bunting Labs AI Vectorizer")
+        # Only called after the user clicks "I accept terms of service"
+        # in the GUI, so store the user's choice and continue.
+        tos_dialog.accepted.connect(lambda: self.settings.setValue(SETTING_TOS, "y"))
+        tos_dialog.accepted.connect(lambda: self.openEmailDialog())
+
+        layout = QVBoxLayout(tos_dialog)
+        layout.setContentsMargins(40, 20, 40, 20) # Add padding to the layout
+        layout.setSpacing(10) # Add spacing between widgets
+
+        layout.addWidget(OnboardingHeaderWidget([
+            "Introduction", "Create account", "Verify email"
+        ], 0))
+
+        intro_text = QLabel("<p>This plugin uses AI to autocomplete tracing raster maps.</p>")
+        intro_text.setWordWrap(True)
+        layout.addWidget(intro_text)
+
+        pixmap = QPixmap(os.path.join(os.path.dirname(__file__), 'assets', 'plugin_data_flow.png')).scaled(422, 396, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        pixmap_label = QLabel()
+        pixmap_label.setPixmap(pixmap)
+        pixmap_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(pixmap_label)
+
+        explain_text = QLabel("Because your maps are sent to our servers to run the AI, you must agree to our <a href=\"https://buntinglabs.com/legal/terms\">terms of service</a> to use the plugin.")
+        explain_text.setOpenExternalLinks(True)
+        explain_text.setWordWrap(True)
+        layout.addWidget(explain_text)
+
+        tos_layout = QHBoxLayout()
+
+        reject_button = QPushButton("Abort installation")
+        reject_button.clicked.connect(lambda: tos_dialog.reject())
+        tos_layout.addWidget(reject_button)
+
+        accept_button = QPushButton("I accept terms of service")
+        accept_button.clicked.connect(lambda: tos_dialog.accept())
+        accept_button.setDefault(True)
+        tos_layout.addWidget(accept_button)
+
+        layout.addLayout(tos_layout)
+
+        version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
+        version_label.setAlignment(Qt.AlignCenter)
+
+        layout.addWidget(version_label)
+
+        tos_dialog.setLayout(layout)
+        tos_dialog.exec_()
+
+    # 2. Email dialog, which triggers emailSubmitted below.
+    def openEmailDialog(self):
+        email_dialog = QDialog(self.iface.mainWindow())
+        email_dialog.setWindowTitle("Bunting Labs AI Vectorizer")
+        email_dialog.accepted.connect(self.emailSubmitted)
+
+        layout = QVBoxLayout(email_dialog)
+        layout.setContentsMargins(40, 20, 40, 20) # Add padding to the layout
+        layout.setSpacing(10) # Add spacing between widgets
+
+        layout.addWidget(OnboardingHeaderWidget([
+            "Introduction", "Create account", "Verify email"
+        ], 1))
+
+        intro_text = QLabel("To prevent abuse of our servers, we need to verify that you're human.")
+        intro_text.setWordWrap(True)
+        layout.addWidget(intro_text)
+
+        explain_text = QLabel("You will automatically be on our free tier, with access to 2,000 completions per month. No credit card is needed.")
+        explain_text.setWordWrap(True)
+        layout.addWidget(explain_text)
+
+        email_button_layout = QHBoxLayout()
+
+        # put on self because it's accessed in emailSubmitted
+        self.email_input = QLineEdit()
+        self.email_input.setPlaceholderText("Your work email here")
+        email_button_layout.addWidget(self.email_input)
+
+        start_button = QPushButton("Create account")
+        start_button.clicked.connect(lambda: email_dialog.accept())
+        email_button_layout.addWidget(start_button)
+
+        layout.addLayout(email_button_layout)
+
+        version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
+        version_label.setAlignment(Qt.AlignCenter)
+
+        layout.addWidget(version_label)
+
+        email_dialog.setLayout(layout)
+        email_dialog.exec_()
+
+    # Triggered in openEmailDialog
+    def emailSubmitted(self):
+        user_email = self.email_input.text()
+
+        # Randomly generate an api key and submit that to the website
+        new_api_key = generate_random_api_key()
+
+        self.register_task = EmailRegisterTask(
+            "Registering user's email",
+            user_email,
+            f"BuntingLabsQGISAIVectorizer/{self.plugin_version}",
+            new_api_key
+        )
+        self.register_task.finishedSignal.connect(lambda status: self.confirmEmailPlease(status, new_api_key))
+
+        QgsApplication.taskManager().addTask(
+            self.register_task,
+        )
+
+    # This either 4. asks them for a secret token from /dashboard, or
+    # 3. asks them to confirm their email.
+    def confirmEmailPlease(self, status: str, new_api_key: str):
+        # If status was 'created', confirm email.
+        # if status was 'error'
+        if status == 'failed':
+            self.iface.messageBar().pushCritical(
+                'AI Vectorizer onboarding failed',
+                'Please schedule a call to debug.',
+            )
+            return
+        elif status == 'refresh_token':
+            # Ignore randomly generated API key
+
+            token_dialog = QDialog(self.iface.mainWindow())
+            token_dialog.setWindowTitle("Bunting Labs AI Vectorizer")
+            token_dialog.accepted.connect(self.tokenSubmitted)
+
+            layout = QVBoxLayout(token_dialog)
+            layout.setContentsMargins(40, 20, 40, 20) # Add padding to the layout
+            layout.setSpacing(10) # Add spacing between widgets
+
+            layout.addWidget(OnboardingHeaderWidget([
+                "Introduction", "Create account", "Retrieve Token"
+            ], 2))
+
+            intro_text = QLabel("To continue, please copy your secret token from <a href=\"https://buntinglabs.com/dashboard\">your dashboard</a> and paste it below.")
+            intro_text.setWordWrap(True)
+            intro_text.setOpenExternalLinks(True)
+            layout.addWidget(intro_text)
+
+            explain_text = QLabel("This will connect your QGIS plugin to your free account. Keep your token a secret.")
+            explain_text.setWordWrap(True)
+            layout.addWidget(explain_text)
+
+            secret_button_layout = QHBoxLayout()
+
+            self.token_input = QLineEdit()
+            self.token_input.setPlaceholderText("Your secret token here")
+            secret_button_layout.addWidget(self.token_input)
+
+            start_button = QPushButton("Save secret token")
+            start_button.clicked.connect(lambda: token_dialog.accept())
+            secret_button_layout.addWidget(start_button)
+
+            layout.addLayout(secret_button_layout)
+
+            version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
+            version_label.setAlignment(Qt.AlignCenter)
+
+            layout.addWidget(version_label)
+
+            token_dialog.setLayout(layout)
+            token_dialog.exec_()
+        else:
+            assert status == 'created'
+
+            # Save API key, because setting it was successful
+            self.settings.setValue(SETTING_API_TOKEN, new_api_key)
+
+            self.email_confirm_dialog = QDialog(self.iface.mainWindow())
+            self.email_confirm_dialog.setWindowTitle("Bunting Labs AI Vectorizer")
+
+            layout = QVBoxLayout(self.email_confirm_dialog)
+            layout.setContentsMargins(40, 20, 40, 20) # Add padding to the layout
+            layout.setSpacing(10) # Add spacing between widgets
+
+            layout.addWidget(OnboardingHeaderWidget([
+                "Introduction", "Create account", "Verify email"
+            ], 2))
+
+            intro_text = QLabel("Please open your email inbox, and find the email from <code>login@stytch.com</code> titled “Your account creation request for Bunting Labs”.")
+            intro_text.setWordWrap(True)
+            layout.addWidget(intro_text)
+
+            pixmap = QPixmap(os.path.join(os.path.dirname(__file__), 'assets', 'confirm_email.png')).scaled(512, 295, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pixmap_label = QLabel()
+            pixmap_label.setPixmap(pixmap)
+            pixmap_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(pixmap_label)
+
+            explain_text = QLabel("Click “Continue” in the email to activate your account. You can then return to QGIS and finish installation by clicking the button below.")
+            explain_text.setWordWrap(True)
+            layout.addWidget(explain_text)
+
+            status_layout = QHBoxLayout()
+
+            self.email_validated_status = QLabel("")
+            self.email_validated_status.setAlignment(Qt.AlignCenter)
+            self.email_validated_status.setStyleSheet("QLabel {color: darkred; font-size: 18px;}")
+            status_layout.addWidget(self.email_validated_status)
+
+            done_button = QPushButton("I've clicked the link")
+            done_button.clicked.connect(lambda: self.checkForAccount())
+            done_button.setDefault(True)
+            status_layout.addWidget(done_button)
+
+            layout.addLayout(status_layout)
+
+            version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
+            version_label.setAlignment(Qt.AlignCenter)
+
+            layout.addWidget(version_label)
+
+            self.email_confirm_dialog.setLayout(layout)
+            self.email_confirm_dialog.exec_()
+
+    def tokenSubmitted(self):
+        self.settings.setValue(SETTING_API_TOKEN, self.token_input.text())
+
+        self.check_for_account_task = ValidateEmailTask('validate email', self.settings.value(SETTING_API_TOKEN, ""))
+        self.check_for_account_task.finishedSignal.connect(lambda status: status and self.showLastOnboardingTutorial())
+        QgsApplication.taskManager().addTask(
+            self.check_for_account_task,
+        )
+
+    def checkForAccount(self):
+        self.email_validated_status.setText("⟳")
+
+        self.check_for_account_task = ValidateEmailTask('validate email', self.settings.value(SETTING_API_TOKEN, ""))
+        self.check_for_account_task.finishedSignal.connect(self.updateEmailValidation)
+
+        QgsApplication.taskManager().addTask(
+            self.check_for_account_task,
+        )
+
+    def updateEmailValidation(self, status):
+        if status:
+            self.email_validated_status.setText("✓")
+            self.email_validated_status.setStyleSheet("QLabel {color: green; font-size: 24px;}")
+
+            self.email_confirm_dialog.accept()
+            self.showLastOnboardingTutorial()
+        else:
+            self.email_validated_status.setText("You haven't clicked the link yet")
+            self.email_validated_status.setStyleSheet("QLabel {color: darkred; font-size: 18px;}")
+
+    # 5. the ultimate page
+    def showLastOnboardingTutorial(self):
+        onboarding_dialog = QDialog(self.iface.mainWindow())
+        onboarding_dialog.setWindowTitle("Bunting Labs AI Vectorizer")
+        layout = QVBoxLayout()
+
+        split_layout = QHBoxLayout()
+        left_layout = QVBoxLayout()
+        right_layout = QVBoxLayout()
+
+        left_layout.addWidget(QLabel("<b>You're in! Here's how you can start using the plugin:</b>"))
+        left_layout.addWidget(QLabel("1. Load a raster layer to digitize"))
+        left_layout.addWidget(QLabel("2. Create a new Shapefile layer"))
+        left_layout.addWidget(QLabel("3. Toggle editing mode"))
+        left_layout.addWidget(QLabel("4. Click the AI Vectorizer icon"))
+        left_layout.addWidget(QLabel("5. Start tracing the feature you want to digitize"))
+        left_layout.addWidget(QLabel("6. Hold down <code>shift</code> to cut AI generated lines and create manual completions"))
+
+        gif_label = QLabel()
+        gif_movie = QMovie(os.path.join(os.path.dirname(__file__), 'assets', 'instructions.gif'))
+        gif_movie.setScaledSize(QSize(724/1.5, 480/1.5))
+        gif_movie.start()
+        gif_label.setMovie(gif_movie)
+
+        right_layout.addWidget(gif_label)
+
+        split_layout.addLayout(left_layout)
+        split_layout.addLayout(right_layout)
+
+        layout.addLayout(split_layout)
+
+        close_button = QPushButton("Get started")
+        close_button.clicked.connect(onboarding_dialog.accept)
+        layout.addWidget(close_button)
+
+        onboarding_dialog.setLayout(layout)
+        onboarding_dialog.exec_()
+
     def openSettings(self):
         # Create a closeable modal for API key input
         self.api_key_dialog = QDialog(self.iface.mainWindow())
-        self.api_key_dialog.setWindowTitle("API Key Settings")
-
+        self.api_key_dialog.setWindowTitle("AI Vectorizer Settings")
         layout = QVBoxLayout(self.api_key_dialog)
-        label = QLabel()
-        label.setText("Put your account's API key here to use the AI vectorizer. You can get an API key at <a href='http://buntinglabs.com/dashboard'>your account page</a> after signing up for free.")
+
+        title_label = QLabel("<b>Terms of Service</b>")
+        layout.addWidget(title_label)
+
+        label_with_link = QLabel("You can find our terms of service posted <a href='https://buntinglabs.com/legal/terms'>on our website</a>. Agreement is required to use the AI-enabled autocomplete.")
+        label_with_link.setOpenExternalLinks(True)
+        label_with_link.setWordWrap(True)
+        layout.addWidget(label_with_link)
+
+        tos_checkbox = QCheckBox("I agree to the above terms of service")
+        if self.settings.value(SETTING_TOS, "") == "y":
+            tos_checkbox.setChecked(True)
+        tos_checkbox.stateChanged.connect(lambda: self.settings.setValue(SETTING_TOS, "y" if tos_checkbox.isChecked() else ""))
+        layout.addWidget(tos_checkbox)
+
+        title_label = QLabel("<b>Account Secret Key</b>")
+        layout.addWidget(title_label)
+
+        label = QLabel("Put your account's secret key here to use the AI vectorizer. You can find your account secret key at <a href='http://buntinglabs.com/dashboard'>your dashboard</a> after signing up for free.")
         label.setOpenExternalLinks(True)
+        label.setWordWrap(True)
+
+        sublabel = QLabel("If the secret key has been auto-filled, there's no need to change it, unless your plugin cannot connect.")
 
         self.api_key_input = QLineEdit()
-        self.api_key_input.setText(self.settings.value("buntinglabs-qgis-plugin/api_key", "demo"))
+        self.api_key_input.setText(self.settings.value(SETTING_API_TOKEN, "demo"))
 
         save_button = QPushButton("Save")
         save_button.clicked.connect(self.saveSettings)
 
         layout.addWidget(label)
         layout.addWidget(self.api_key_input)
+        layout.addWidget(sublabel)
         layout.addWidget(save_button)
 
         self.api_key_dialog.setLayout(layout)
@@ -129,8 +468,7 @@ class BuntingLabsPlugin:
 
     def saveSettings(self):
         # Save the API key from the input field to the settings
-        api_key = self.api_key_input.text()
-        self.settings.setValue("buntinglabs-qgis-plugin/api_key", api_key)
+        self.settings.setValue(SETTING_API_TOKEN, self.api_key_input.text())
 
         self.iface.messageBar().pushMessage(
             "Bunting Labs AI Vectorizer",
