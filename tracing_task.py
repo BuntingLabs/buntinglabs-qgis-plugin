@@ -5,6 +5,7 @@ import http.client
 import json
 from osgeo import gdal, osr
 import numpy as np
+import ssl
 
 from qgis.core import QgsTask, QgsMapSettings, QgsMapRendererCustomPainterJob, \
     QgsCoordinateTransform, QgsProject, QgsRectangle, Qgis
@@ -183,6 +184,12 @@ class AutocompleteTask(QgsTask):
                 return False
         except BrokenPipeError:
             self.errorReceived.emit('Got BrokenPipeError when trying to connect to inference server')
+            return False
+        except ssl.SSLCertVerificationError:
+            self.errorReceived.emit('SSL Certificate Verification Failed when connecting to inference server')
+            return False
+        except Exception as e:
+            self.errorReceived.emit(f'Error when trying to connect to inference server: {str(e)}')
             return False
 
         buffer = ""
