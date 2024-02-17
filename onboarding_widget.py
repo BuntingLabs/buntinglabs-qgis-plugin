@@ -41,7 +41,7 @@ class StepWidget(QWidget):
         self.layout.addWidget(self.label) # Add the label to the layout
 
         font = self.label.font()
-        font.setPointSize(font.pointSize() * 1.25) # Upgrade font size by 1.4x
+        font.setPointSizeF(font.pointSize() * 1.25) # Upgrade font size by 1.25x
 
         if active:
             font.setBold(True)
