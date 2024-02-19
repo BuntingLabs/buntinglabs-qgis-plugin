@@ -5,7 +5,7 @@ import string
 import random
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, \
-    QPushButton, QAction, QHBoxLayout, QCheckBox
+    QPushButton, QAction, QHBoxLayout, QCheckBox, QButtonGroup, QRadioButton
 from PyQt5.QtGui import QIcon, QMovie, QPixmap
 from PyQt5.QtCore import QSettings, Qt
 
@@ -22,6 +22,7 @@ from .onboarding_widget import OnboardingHeaderWidget
 # Settings for QGIS
 SETTING_API_TOKEN = "buntinglabs-qgis-plugin/api_key"
 SETTING_TOS = "buntinglabs-qgis-plugin/terms_of_service_state"
+SETTING_CONTEXT_WINDOW_SIZE = "buntinglabs-qgis-plugin/window_size_px"
 
 def generate_random_api_key():
     return ''.join(random.choice(string.ascii_uppercase + string.ascii_lowercase + string.digits) for _ in range(12))
@@ -453,12 +454,36 @@ class BuntingLabsPlugin:
         self.api_key_input = QLineEdit()
         self.api_key_input.setText(self.settings.value(SETTING_API_TOKEN, "demo"))
 
-        save_button = QPushButton("Save")
-        save_button.clicked.connect(self.saveSettings)
-
         layout.addWidget(label)
         layout.addWidget(self.api_key_input)
         layout.addWidget(sublabel)
+
+        context_window_label = QLabel("<b>Context Window Size</b>")
+        layout.addWidget(context_window_label)
+
+        context_window_description = QLabel("Get longer completions at the cost of longer load time by increasing the amount of map sent to our servers.")
+        context_window_description.setWordWrap(True)
+        layout.addWidget(context_window_description)
+
+        context_window_group = QButtonGroup(self.api_key_dialog)
+
+        small_window_option = QRadioButton("1200x1200 pixels")
+        context_window_group.addButton(small_window_option)
+        layout.addWidget(small_window_option)
+
+        large_window_option = QRadioButton("2500x2500 pixels")
+        context_window_group.addButton(large_window_option)
+        layout.addWidget(large_window_option)
+
+        if self.settings.value(SETTING_CONTEXT_WINDOW_SIZE, "1200") == "2500":
+            large_window_option.setChecked(True)
+        else:
+            small_window_option.setChecked(True)
+
+        context_window_group.buttonClicked.connect(lambda btn: self.settings.setValue(SETTING_CONTEXT_WINDOW_SIZE, "2500" if btn.text() == "2500x2500 pixels" else "1200"))
+
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(self.saveSettings)
         layout.addWidget(save_button)
 
         self.api_key_dialog.setLayout(layout)

@@ -9,6 +9,7 @@ import ssl
 
 from qgis.core import QgsTask, QgsMapSettings, QgsMapRendererCustomPainterJob, \
     QgsCoordinateTransform, QgsProject, QgsRectangle, Qgis
+from qgis.gui import QgsMapToolCapture
 from qgis.PyQt.QtGui import QImage, QPainter, QColor
 from qgis.PyQt.QtCore import QSize, pyqtSignal
 
@@ -72,8 +73,10 @@ class AutocompleteTask(QgsTask):
             return False
 
         # Size of the rectangle in the CRS coordinates
-        # 1200 is the number of pixels we want to render
-        img_width, img_height = 1200, 1200
+        window_size = self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/window_size_px", "1200")
+        assert window_size in ["1200", "2500"] # Two allowed sizes
+
+        img_width, img_height = int(window_size), int(window_size)
         x_size = img_width * x_res
         y_size = img_height * y_res
 
