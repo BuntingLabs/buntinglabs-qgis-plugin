@@ -148,7 +148,8 @@ class AutocompleteTask(QgsTask):
             'num_completions': self.tracing_tool.num_completions,
             'qgis_version': Qgis.QGIS_VERSION,
             'plugin_version': self.tracing_tool.plugin.plugin_version,
-            'proj_epsg': mapEpsgCode
+            'proj_epsg': mapEpsgCode,
+            'is_polygon': self.tracing_tool.mode() == QgsMapToolCapture.CapturePolygon
         })
 
         boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'
