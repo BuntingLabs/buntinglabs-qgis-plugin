@@ -6,6 +6,7 @@ import json
 from osgeo import gdal, osr
 import numpy as np
 import ssl
+import math
 
 from qgis.core import QgsTask, QgsMapSettings, QgsMapRendererCustomPainterJob, \
     QgsCoordinateTransform, QgsProject, QgsRectangle, Qgis
@@ -149,7 +150,12 @@ class AutocompleteTask(QgsTask):
             'qgis_version': Qgis.QGIS_VERSION,
             'plugin_version': self.tracing_tool.plugin.plugin_version,
             'proj_epsg': mapEpsgCode,
-            'is_polygon': self.tracing_tool.mode() == QgsMapToolCapture.CapturePolygon
+            'is_polygon': self.tracing_tool.mode() == QgsMapToolCapture.CapturePolygon,
+            # Rasters can be at all sorts of resolutions, but the current zoom level of
+            # the QGIS window gives us a hint as to the best zoom to autocomplete with.
+            "resolution_units_per_pixel": self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width(),
+            "raster_units_per_pixel": x_res,
+            "dist_pixels_between_points": math.sqrt((i0-i1)**2 + (j0-j1)**2)
         })
 
         boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'
