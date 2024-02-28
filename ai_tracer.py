@@ -267,6 +267,8 @@ class AIVectorizerTool(QgsMapToolCapture):
             if not (e.modifiers() & Qt.ShiftModifier):
                 self.shift_state = ShiftClickState.HAS_NOT_CUT
 
+            wasDoubleClick = len(self.vertices) >= 1 and point.distance(self.vertices[-1]) == 0
+
             self.addVertex(point)
             self.vertices.append(point)
 
@@ -275,7 +277,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.startCapturing()
 
             # Create our autocomplete task if we have >=2 vertices
-            if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier):
+            if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier) and not wasDoubleClick:
                 root = QgsProject.instance().layerTreeRoot()
                 rlayers = [node.layer() for node in root.children() if isinstance(node, QgsLayerTreeLayer) and isinstance(node.layer(), QgsRasterLayer) and node.itemVisibilityChecked()]
                 vlayer = self.plugin.iface.activeLayer()
