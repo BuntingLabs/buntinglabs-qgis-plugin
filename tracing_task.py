@@ -33,44 +33,31 @@ class AutocompleteTask(QgsTask):
         self.project_crs = project_crs
 
     def run(self):
-        # Initialize resolution variables
-        x_res = float('-inf')
-        y_res = float('-inf')
+        # By default, we zoom out 2.5x from the user's perspective.
+        proj_crs_units_per_screen_pixel = 2.5 * (self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width())
 
         # The resolution of a raster layer is defined as the ground distance covered by one pixel
         # of the raster. Therefore, a smaller resolution value means a higher resolution raster.
         mapEpsgCode = self.project_crs.postgisSrid()
 
         # Assuming self.rlayers is a list of QgsRasterLayer objects
-        primaryrlayer = None
-        for rlayer in self.rlayers:
-            # Get the extent of the raster layer
-            raster_extent = rlayer.extent()
+        layers_same_crs = [ rlayer for rlayer in self.rlayers if rlayer.crs() == self.project_crs ]
+        intersecting_layers = [ rlayer for rlayer in layers_same_crs if rlayer.extent().contains(self.tracing_tool.vertices[-1]) ]
 
-            # Create a QGIS point XY from the last but one point in the path
-            point = self.tracing_tool.vertices[-1]
+        # We don't want to upsample on a raster.
+        # Find the highest resolution raster below us.
+        # Highest resolution raster has the smallest rasterUnitsPerPixelX.
+        # Then cap the resolution at that high resolution.
+        highest_res_at_pt = min(
+            map(lambda rlayer: rlayer.rasterUnitsPerPixelX(), intersecting_layers),
+            default=proj_crs_units_per_screen_pixel
+        )
 
-            # Convert point from self.project_crs to rlayer's crs
-            point_transform = QgsCoordinateTransform(self.project_crs, rlayer.crs(), QgsProject.instance())
-            point = point_transform.transform(point)
+        dx = max(proj_crs_units_per_screen_pixel, highest_res_at_pt)
+        dy = dx
 
-            if raster_extent.contains(point):
-                # Get the resolution of the raster layer
-                x_res_temp = rlayer.rasterUnitsPerPixelX()
-                y_res_temp = rlayer.rasterUnitsPerPixelY()
-
-                # Update x_res and y_res if they are None or larger than the current layer's resolution
-                if x_res_temp > x_res or y_res_temp > y_res:
-                    x_res = x_res_temp
-                    y_res = y_res_temp
-                    primaryrlayer = rlayer
-
-                print(f"Raster layer {rlayer.name()} intersects with the rectangle.")
-                print(f"Resolution in X direction: {x_res}")
-                print(f"Resolution in Y direction: {y_res}")
-
-        if len(self.rlayers) == 0 or primaryrlayer is None:
-            self.errorReceived.emit('No raster layers are visible. Load a GeoTIFF to use autocomplete.')
+        if len(self.rlayers) == 0:
+            self.errorReceived.emit('No raster layers are loaded. Load a GeoTIFF to use autocomplete.')
             return False
 
         # Size of the rectangle in the CRS coordinates
@@ -78,13 +65,12 @@ class AutocompleteTask(QgsTask):
         assert window_size in ["1200", "2500"] # Two allowed sizes
 
         img_width, img_height = int(window_size), int(window_size)
-        x_size = img_width * x_res
-        y_size = img_height * y_res
+        x_size = img_width * dx
+        y_size = img_height * dy
 
         if x_size <= 0 or y_size <= 0:
             self.errorReceived.emit('Could not render an image from the rasters (this is a plugin bug!).')
             return False
-        assert primaryrlayer is not None
 
         # i = y, j = x
         # note that negative i (or y) is up
@@ -134,15 +120,18 @@ class AutocompleteTask(QgsTask):
             # Call the function to convert the image to a geotiff tif and save it as bytes
             tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_max, x_max, y_min)
 
-            i_min, j_min = convert_coords_to_indxs(primaryrlayer, (x_min, y_max))
-            i0, j0 = convert_coords_to_indxs(primaryrlayer, (x0, y0))
-            i1, j1 = convert_coords_to_indxs(primaryrlayer, (x1, y1))
+            i0 = int((y0 - y_max) / dy) * -1
+            j0 = int((x0 - x_min) / dx)
+
+            i1 = int((y1 - y_max) / dy) * -1
+            j1 = int((x1 - x_min) / dx)
+
         except Exception as e:
             self.errorReceived.emit(str(e))
             return False
 
         vector_payload = json.dumps({
-            'coordinates': [[i0-i_min, j0-j_min], [i1-i_min, j1-j_min]]
+            'coordinates': [[i0, j0], [i1, j1]]
         })
 
         options_payload = json.dumps({
@@ -154,7 +143,8 @@ class AutocompleteTask(QgsTask):
             # Rasters can be at all sorts of resolutions, but the current zoom level of
             # the QGIS window gives us a hint as to the best zoom to autocomplete with.
             "resolution_units_per_pixel": self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width(),
-            "raster_units_per_pixel": x_res,
+            "proj_crs_units_per_screen_pixel": proj_crs_units_per_screen_pixel,
+            "highest_res_at_pt": highest_res_at_pt,
             "dist_pixels_between_points": math.sqrt((i0-i1)**2 + (j0-j1)**2)
         })
 
@@ -224,7 +214,9 @@ class AutocompleteTask(QgsTask):
                 ix, jx = new_point[0], new_point[1]
 
                 # convert to xy
-                xn, yn = convert_indxs_to_coords(primaryrlayer, (ix+i_min, jx+j_min))
+                xn = (jx * dx) + x_min
+                yn = y_max - (ix * dy)
+
                 self.pointReceived.emit(((xn, yn), 1.0))
 
         return True
@@ -235,35 +227,6 @@ class AutocompleteTask(QgsTask):
     def cancel(self):
         super().cancel()
 
-
-# Convert map CRS coordinates to the pixels in the image
-def convert_coords_to_indxs(rlayer, xy):
-    x, y = xy
-    provider = rlayer.dataProvider()
-    extent = provider.extent()
-
-    dx = rlayer.rasterUnitsPerPixelX()
-    dy = rlayer.rasterUnitsPerPixelY()
-    top_left_x = extent.xMinimum()
-    top_left_y = extent.yMaximum()
-    # geo_ref = (top_left_x, top_left_y, dx, dy)
-    i = int((y - top_left_y) / dy) * -1
-    j = int((x - top_left_x) / dx)
-    return i, j
-
-def convert_indxs_to_coords(rlayer, ij):
-    i, j = ij
-    provider = rlayer.dataProvider()
-    extent = provider.extent()
-
-    dx = rlayer.rasterUnitsPerPixelX()
-    dy = rlayer.rasterUnitsPerPixelY()
-    top_left_x = extent.xMinimum()
-    top_left_y = extent.yMaximum()
-    # geo_ref = (top_left_x, top_left_y, dx, dy)
-    x = j * dx + top_left_x
-    y = top_left_y - i * dy
-    return x, y
 
 def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
     # Open the PNG file

@@ -60,6 +60,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.num_completions = 50
 
         # List of QgsPointXY that represents the new feature
+        # via QgsMapTool.toMapCoordinates(), it's in project CRS
         self.vertices = []
 
         self.autocomplete_task = None
