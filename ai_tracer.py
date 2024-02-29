@@ -214,15 +214,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def canvasReleaseEvent(self, e):
         # Either click will cancel an ongoing autocomplete
-        if self.autocomplete_task is not None:
-            # QgsTasks passed to a task manager end up being owned
-            # in C++ land which leads us ... here.
-            try:
-                self.autocomplete_task.cancel()
-            except RuntimeError:
-                pass
-            finally:
-                self.autocomplete_task = None
+        self.maybeCancelTask()
 
         vlayer = self.plugin.iface.activeLayer()
         if not isinstance(vlayer, QgsVectorLayer):
@@ -311,6 +303,46 @@ class AIVectorizerTool(QgsMapToolCapture):
                 QgsApplication.taskManager().addTask(
                     self.autocomplete_task,
                 )
+
+    def maybeCancelTask(self):
+        # Cancels the task if it's running
+        if self.autocomplete_task is not None:
+            # QgsTasks passed to a task manager end up being owned
+            # in C++ land which leads us ... here.
+            try:
+                self.autocomplete_task.cancel()
+            except RuntimeError:
+                pass
+            finally:
+                self.autocomplete_task = None
+
+            return True
+        else:
+            return False
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Backspace, Qt.Key_Delete) and len(self.vertices) >= 2:
+            self.maybeCancelTask()
+
+            if not e.isAutoRepeat():
+                self.undo()
+                self.vertices.pop()
+
+                e.accept()
+                return
+        elif e.key() == Qt.Key_Escape:
+            if self.maybeCancelTask():
+                # escape will just cancel the task if it existed
+                return
+
+            self.stopCapturing()
+            self.vertices = []
+            self.rb.reset()
+
+            e.accept()
+            return
+
+        e.ignore()
 
     def deactivate(self):
         self.rb.reset()
