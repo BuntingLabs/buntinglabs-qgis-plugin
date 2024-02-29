@@ -19,7 +19,8 @@ class AutocompleteTask(QgsTask):
     # back from the inference server.
 
     pointReceived = pyqtSignal(tuple)
-    errorReceived = pyqtSignal(str)
+    # Tuple for (error message, error link or None, error button text or None)
+    errorReceived = pyqtSignal(tuple)
 
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs):
         super().__init__(
@@ -57,7 +58,10 @@ class AutocompleteTask(QgsTask):
         dy = dx
 
         if len(self.rlayers) == 0:
-            self.errorReceived.emit('No raster layers are loaded. Load a GeoTIFF to use autocomplete.')
+            self.errorReceived.emit((
+                'No raster layers are loaded. Load a GeoTIFF to use autocomplete.',
+                None, None
+            ))
             return False
 
         # Size of the rectangle in the CRS coordinates
@@ -69,7 +73,11 @@ class AutocompleteTask(QgsTask):
         y_size = img_height * dy
 
         if x_size <= 0 or y_size <= 0:
-            self.errorReceived.emit('Could not render an image from the rasters (this is a plugin bug!).')
+            self.errorReceived.emit((
+                'Could not render an image from the rasters (this is a plugin bug!).',
+                'https://github.com/BuntingLabs/buntinglabs-qgis-plugin/issues/new',
+                'Report Bug'
+            ))
             return False
 
         # i = y, j = x
@@ -127,7 +135,7 @@ class AutocompleteTask(QgsTask):
             j1 = int((x1 - x_min) / dx)
 
         except Exception as e:
-            self.errorReceived.emit(str(e))
+            self.errorReceived.emit((str(e), None, None))
             return False
 
         vector_payload = json.dumps({
@@ -180,16 +188,27 @@ class AutocompleteTask(QgsTask):
             conn.request("POST", "/v1", body, headers)
             res = conn.getresponse()
             if res.status != 200:
-                self.errorReceived.emit(res.read().decode('utf-8'))
+                error_payload = res.read().decode('utf-8')
+
+                try:
+                    error_details = json.loads(error_payload)
+                    self.errorReceived.emit((
+                        error_details.get('message'),
+                        error_details.get('link'),
+                        error_details.get('link_text')
+                    ))
+                except json.JSONDecodeError:
+                    self.errorReceived.emit((error_payload, None, None))
+
                 return False
         except BrokenPipeError:
-            self.errorReceived.emit('Got BrokenPipeError when trying to connect to inference server')
+            self.errorReceived.emit(('Got BrokenPipeError when trying to connect to inference server', None, None))
             return False
         except ssl.SSLCertVerificationError:
-            self.errorReceived.emit('SSL Certificate Verification Failed when connecting to inference server')
+            self.errorReceived.emit(('SSL Certificate Verification Failed when connecting to inference server', None, None))
             return False
         except Exception as e:
-            self.errorReceived.emit(f'Error when trying to connect to inference server: {str(e)}')
+            self.errorReceived.emit((f'Error when trying to connect to inference server: {str(e)}', None, None))
             return False
 
         buffer = ""

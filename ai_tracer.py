@@ -2,9 +2,9 @@
 
 from enum import Enum
 
-from qgis.PyQt.QtCore import Qt, QSettings
+from qgis.PyQt.QtCore import Qt, QSettings, QUrl
 from qgis.PyQt.QtWidgets import QPushButton
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtGui import QColor, QDesktopServices
 from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsVertexMarker, \
     QgsSnapIndicator
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
@@ -99,11 +99,17 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         return rb
 
-    def notifyUserOfAuthError(self, e):
-        widget = self.plugin.iface.messageBar().createMessage("Error", "Could not call AI vectorizer: %s." % e)
+    def notifyUserOfError(self, msg, link_url, link_text):
+        widget = self.plugin.iface.messageBar().createMessage("Error", "Could not call AI vectorizer: %s." % msg)
         button = QPushButton(widget)
-        button.setText("Edit API key")
-        button.pressed.connect(self.plugin.openSettings)
+
+        if link_url is not None and link_text is not None:
+            button.setText(link_text)
+            button.pressed.connect(lambda: QDesktopServices.openUrl(QUrl(link_url)))
+        else:
+            button.setText("Open Settings")
+            button.pressed.connect(self.plugin.openSettings)
+
         widget.layout().addWidget(button)
         self.plugin.iface.messageBar().pushWidget(widget, Qgis.Critical, duration=15)
 
@@ -293,7 +299,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                 )
 
                 self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
-                self.autocomplete_task.errorReceived.connect(lambda e: self.notifyUserOfAuthError(e))
+                self.autocomplete_task.errorReceived.connect(lambda e: self.notifyUserOfError(*e))
 
                 QgsApplication.taskManager().addTask(
                     self.autocomplete_task,
