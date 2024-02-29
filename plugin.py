@@ -42,8 +42,9 @@ class BuntingLabsPlugin:
         # Set by the text box in save settings
         self.api_key_input = None
 
-        self.action = None
-        self.tracer = None
+        icon_path = os.path.join(os.path.dirname(__file__), "vectorizing_icon.png")
+        self.action = QAction(QIcon(icon_path), '<b>Vectorize with AI</b><p>Toggle editing on a vector layer then enable to autocomplete new geometries.</p>', None)
+        self.tracer = AIVectorizerTool(self)
 
         # Read the plugin version
         try:
@@ -58,9 +59,6 @@ class BuntingLabsPlugin:
         self.settings_action = None
 
     def update_checkable(self):
-        if self.action is None:
-            return
-
         # Before onboarding, it's always checkable.
         if self.settings.value(SETTING_TOS, "") != "y" or self.settings.value(SETTING_API_TOKEN, "") == "":
             self.action.setEnabled(True)
@@ -82,34 +80,15 @@ class BuntingLabsPlugin:
 
         self.update_checkable()
 
-    def initTracer(self):
-        self.tracer = None
-
-        # see what type of layer we are vectorizing
-        vlayer = self.iface.activeLayer()
-        if isinstance(vlayer, QgsVectorLayer):
-            if vlayer.wkbType() in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString]:
-                self.tracer = AIVectorizerTool(self, QgsMapToolCapture.CaptureLine)
-            elif vlayer.wkbType() in [QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
-                self.tracer = AIVectorizerTool(self, QgsMapToolCapture.CapturePolygon)
-            else:
-                self.iface.messageBar().pushMessage(
-                    "Bunting Labs AI Vectorizer",
-                    "Unsupported vector layer type for AI autocomplete.",
-                    Qgis.Warning,
-                    duration=15)
-
     def initGui(self):
         # Initialize the plugin GUI
-        icon_path = os.path.join(os.path.dirname(__file__), "vectorizing_icon.png")
 
-        self.action = QAction(QIcon(icon_path), '<b>Vectorize with AI</b><p>Toggle editing on a vector layer then enable to autocomplete new geometries.</p>', self.iface.mainWindow())
+        # Because we don't pass iface.mainWindow() to the QAction constructor in __init__
+        self.iface.mainWindow().addAction(self.action)
+
         self.action.setCheckable(True)
         self.action.triggered.connect(self.toolbarClick)
         self.iface.addToolBarIcon(self.action)
-
-        # Uncheck ourselves if they change tools
-        self.iface.mapCanvas().mapToolSet.connect(self.onMapToolChanged)
 
         # Trigger a current layer change event to get the right action
         self.current_layer_change_event(self.iface.activeLayer())
@@ -508,17 +487,6 @@ class BuntingLabsPlugin:
 
         self.iface.removeToolBarIcon(self.action)
 
-    def onMapToolChanged(self, newTool, _):
-        if not isinstance(newTool, AIVectorizerTool):
-            self.deactivate()
-
-    def deactivate(self):
-        if isinstance(self.tracer, AIVectorizerTool):
-            self.tracer.deactivate()
-
-        self.action.setChecked(False)
-        self.tracer = None
-
     def toolbarClick(self):
         if self.action.isChecked():
             # Depending on how many settings someone has already set,
@@ -532,7 +500,6 @@ class BuntingLabsPlugin:
                 self.openEmailDialog()
                 return
 
-            self.initTracer()
             self.iface.mapCanvas().setMapTool(self.tracer)
 
             self.action.setChecked(True)

@@ -48,13 +48,13 @@ class ShiftClickState(Enum):
 # polygon geometries. It handles the drawing of rubber bands on the
 # map canvas and the capturing of clicks to build the geometry.
 class AIVectorizerTool(QgsMapToolCapture):
-    def __init__(self, plugin, current_mode):
+    def __init__(self, plugin):
         # Extend QgsMapToolCapture
         cadDockWidget = plugin.iface.cadDockWidget()
-        super(AIVectorizerTool, self).__init__(plugin.iface.mapCanvas(), cadDockWidget, current_mode)
+        super(AIVectorizerTool, self).__init__(plugin.iface.mapCanvas(), cadDockWidget, QgsMapToolCapture.CaptureNone)
 
         self.plugin = plugin
-        self.rb = self.initRubberBand(current_mode)
+        self.rb = self.initRubberBand()
 
         # Options
         self.num_completions = 50
@@ -84,13 +84,14 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.snapIndicator = QgsSnapIndicator(plugin.iface.mapCanvas())
         self.snapper = plugin.iface.mapCanvas().snappingUtils()
 
-    def initRubberBand(self, mode):
-        if mode == QgsMapToolCapture.CaptureLine:
+    def initRubberBand(self):
+        if self.mode() == QgsMapToolCapture.CaptureLine:
             rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.LineGeometry)
-        elif mode == QgsMapToolCapture.CapturePolygon:
+        elif self.mode() == QgsMapToolCapture.CapturePolygon:
             rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
         else:
-            raise ValueError
+            # TODO not sure how we could get here
+            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
 
         rb.setFillColor(self.digitizingFillColor())
         rb.setStrokeColor(self.digitizingStrokeColor())
@@ -223,17 +224,24 @@ class AIVectorizerTool(QgsMapToolCapture):
             finally:
                 self.autocomplete_task = None
 
-        # Right click means we end
-        if e.button() == Qt.RightButton:
-            vlayer = self.plugin.iface.activeLayer()
-            if not isinstance(vlayer, QgsVectorLayer):
-                self.plugin.iface.messageBar().pushMessage(
-                    "Bunting Labs AI Vectorizer",
-                    "No active vector layer.",
-                    Qgis.Warning,
-                    duration=15)
-                return
+        vlayer = self.plugin.iface.activeLayer()
+        if not isinstance(vlayer, QgsVectorLayer):
+            self.plugin.iface.messageBar().pushMessage(
+                "Bunting Labs AI Vectorizer",
+                "No active vector layer.",
+                Qgis.Warning,
+                duration=15)
+            return
+        elif vlayer.wkbType() not in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString,
+                                    QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
+            self.plugin.iface.messageBar().pushMessage(
+                "Bunting Labs AI Vectorizer",
+                "Unsupported vector layer type for AI autocomplete.",
+                Qgis.Warning,
+                duration=15)
+            return
 
+        if e.button() == Qt.RightButton:
             # Will be converted to the relevant geometry
             curve = self.captureCurve()
 
@@ -287,7 +295,6 @@ class AIVectorizerTool(QgsMapToolCapture):
             if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier) and not wasDoubleClick:
                 root = QgsProject.instance().layerTreeRoot()
                 rlayers = [node.layer() for node in root.children() if isinstance(node, QgsLayerTreeLayer) and isinstance(node.layer(), QgsRasterLayer) and node.itemVisibilityChecked()]
-                vlayer = self.plugin.iface.activeLayer()
 
                 project_crs = QgsProject.instance().crs()
 
@@ -309,3 +316,4 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.rb.reset()
 
         self.scissors_icon.hide()
+        self.plugin.action.setChecked(False)
