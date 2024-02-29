@@ -90,8 +90,10 @@ class AIVectorizerTool(QgsMapToolCapture):
         elif self.mode() == QgsMapToolCapture.CapturePolygon:
             rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
         else:
-            # TODO not sure how we could get here
-            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
+            # TODO not sure when we get here.
+            # But it shouldn't matter because rb.setToGeometry "also
+            # change[s] the geometry type of the rubberband."
+            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.LineGeometry)
 
         rb.setFillColor(self.digitizingFillColor())
         rb.setStrokeColor(self.digitizingStrokeColor())
