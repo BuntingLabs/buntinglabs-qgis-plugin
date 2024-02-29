@@ -197,7 +197,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.rb.setStrokeColor(self.digitizingStrokeColor())
 
         # geometry depends on capture mode
-        if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) <= 2):
+        if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) < 2):
             points = [last_point, pt]
             self.rb.setToGeometry(
                 QgsGeometry.fromPolylineXY(points),
