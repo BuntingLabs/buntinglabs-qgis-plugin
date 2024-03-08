@@ -38,6 +38,16 @@ def find_closest_projection_point(pts, pt):
             line_segment_index = i
     return QgsPointXY(projected_pt), line_segment_index
 
+# DFS to find all visible raster layers, even those in groups
+def find_raster_layers(node):
+    layers = []
+    for child in node.children():
+        if isinstance(child, QgsLayerTreeLayer) and isinstance(child.layer(), QgsRasterLayer) and child.itemVisibilityChecked():
+            layers.append(child.layer())
+        elif child.children():
+            layers.extend(find_raster_layers(child))
+    return layers
+
 class ShiftClickState(Enum):
     HAS_NOT_CUT = 1
     HAS_CUT = 2
@@ -288,8 +298,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             # Create our autocomplete task if we have >=2 vertices
             if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier) and not wasDoubleClick:
                 root = QgsProject.instance().layerTreeRoot()
-                rlayers = [node.layer() for node in root.children() if isinstance(node, QgsLayerTreeLayer) and isinstance(node.layer(), QgsRasterLayer) and node.itemVisibilityChecked()]
-
+                rlayers = find_raster_layers(root)
                 project_crs = QgsProject.instance().crs()
 
                 self.autocomplete_task = AutocompleteTask(
