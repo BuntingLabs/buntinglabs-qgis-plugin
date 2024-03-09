@@ -14,6 +14,35 @@ from qgis.gui import QgsMapToolCapture
 from qgis.PyQt.QtGui import QImage, QPainter, QColor
 from qgis.PyQt.QtCore import QSize, pyqtSignal
 
+def rasterUnitsPerPixelEstimate(rlayer, project_crs, vertices):
+    # vertices are in project_crs
+    assert len(vertices) == 2
+
+    # if same CRS or CRS is "invalid", just do direct calculation
+    if rlayer.crs() == project_crs or not rlayer.crs().isValid():
+        return rlayer.rasterUnitsPerPixelX()
+
+    # Calculate the Euclidean distance between the last two vertices in the project CRS
+    dist_proj_crs = math.sqrt((vertices[-2].x() - vertices[-1].x())**2 + (vertices[-2].y() - vertices[-1].y())**2)
+
+    # Convert points to the CRS of the raster layer
+    transform = QgsCoordinateTransform(project_crs, rlayer.crs(), QgsProject.instance())
+
+    point1_rlayer_crs = transform.transform(vertices[-1])
+    point2_rlayer_crs = transform.transform(vertices[-2])
+    dist_rlayer_crs = math.sqrt((point2_rlayer_crs.x() - point1_rlayer_crs.x())**2 + (point2_rlayer_crs.y() - point1_rlayer_crs.y())**2)
+
+    return (dist_proj_crs / dist_rlayer_crs) * rlayer.rasterUnitsPerPixelX()
+
+def layerDoesIntersect(rlayer, project_crs, vertex):
+    # if same CRS or CRS is "invalid", just do direct .contains() check
+    if rlayer.crs() == project_crs or not rlayer.crs().isValid():
+        return rlayer.extent().contains(vertex)
+
+    transform = QgsCoordinateTransform(project_crs, rlayer.crs(), QgsProject.instance())
+    transformed_vertex = transform.transform(vertex)
+    return rlayer.extent().contains(transformed_vertex)
+
 class AutocompleteTask(QgsTask):
     # This task can run in the background of QGIS, streaming results
     # back from the inference server.
@@ -42,19 +71,17 @@ class AutocompleteTask(QgsTask):
         mapEpsgCode = self.project_crs.postgisSrid()
 
         # Assuming self.rlayers is a list of QgsRasterLayer objects
-        layers_same_crs = [ rlayer for rlayer in self.rlayers if rlayer.crs() == self.project_crs ]
-        intersecting_layers = [ rlayer for rlayer in layers_same_crs if rlayer.extent().contains(self.tracing_tool.vertices[-1]) ]
+        # If the user drags in a raster layer without a CRS, default behavior is to give it "unknown"
+        # aka invalid CRS, which (to my knowledge) does not reproject and is equivalent to being in the same CRS.
+        intersecting_layers = [ rlayer for rlayer in self.rlayers if layerDoesIntersect(rlayer, self.project_crs, self.tracing_tool.vertices[-1]) ]
 
-        # We don't want to upsample on a raster.
-        # Find the highest resolution raster below us.
-        # Highest resolution raster has the smallest rasterUnitsPerPixelX.
-        # Then cap the resolution at that high resolution.
-        highest_res_at_pt = min(
-            map(lambda rlayer: rlayer.rasterUnitsPerPixelX(), intersecting_layers),
-            default=proj_crs_units_per_screen_pixel
-        )
+        # ( units in project CRS ) / ( 1 raster layer's pixel ), independent of raster CRS based on Euclidean approximation
+        rupps = [ rasterUnitsPerPixelEstimate(r, self.project_crs, self.tracing_tool.vertices[-2:]) for r in intersecting_layers ]
 
-        dx = max(proj_crs_units_per_screen_pixel, highest_res_at_pt)
+        # Use the resolution of the topmost raster layer
+        topmost_res_at_pt = rupps[0] if len(intersecting_layers) >= 1 else proj_crs_units_per_screen_pixel
+
+        dx = max(proj_crs_units_per_screen_pixel, topmost_res_at_pt)
         dy = dx
 
         if len(self.rlayers) == 0:
@@ -152,7 +179,7 @@ class AutocompleteTask(QgsTask):
             # the QGIS window gives us a hint as to the best zoom to autocomplete with.
             "resolution_units_per_pixel": self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width(),
             "proj_crs_units_per_screen_pixel": proj_crs_units_per_screen_pixel,
-            "highest_res_at_pt": highest_res_at_pt,
+            "topmost_res_at_pt": topmost_res_at_pt,
             "dist_pixels_between_points": math.sqrt((i0-i1)**2 + (j0-j1)**2)
         })
 
