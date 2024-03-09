@@ -112,8 +112,9 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         return rb
 
-    def notifyUserOfError(self, msg, link_url, link_text):
-        widget = self.plugin.iface.messageBar().createMessage("Error", "Could not call AI vectorizer: %s." % msg)
+    # msg_type is Qgis.Critical, Qgis.Info, Qgis.Warning, Qgis.success
+    def notifyUserOfMessage(self, msg, msg_type, link_url, link_text):
+        widget = self.plugin.iface.messageBar().createMessage("AI Vectorizer", msg)
         button = QPushButton(widget)
 
         if link_url is not None and link_text is not None:
@@ -124,7 +125,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             button.pressed.connect(self.plugin.openSettings)
 
         widget.layout().addWidget(button)
-        self.plugin.iface.messageBar().pushWidget(widget, Qgis.Critical, duration=15)
+        self.plugin.iface.messageBar().pushWidget(widget, msg_type, duration=15)
 
     def handlePointReceived(self, args):
         self.addVertex(QgsPointXY(*args[0]))
@@ -309,7 +310,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                 )
 
                 self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
-                self.autocomplete_task.errorReceived.connect(lambda e: self.notifyUserOfError(*e))
+                self.autocomplete_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
 
                 QgsApplication.taskManager().addTask(
                     self.autocomplete_task,

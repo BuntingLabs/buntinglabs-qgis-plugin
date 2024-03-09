@@ -48,8 +48,8 @@ class AutocompleteTask(QgsTask):
     # back from the inference server.
 
     pointReceived = pyqtSignal(tuple)
-    # Tuple for (error message, error link or None, error button text or None)
-    errorReceived = pyqtSignal(tuple)
+    # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
+    messageReceived = pyqtSignal(tuple)
 
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs):
         super().__init__(
@@ -85,9 +85,9 @@ class AutocompleteTask(QgsTask):
         dy = dx
 
         if len(self.rlayers) == 0:
-            self.errorReceived.emit((
+            self.messageReceived.emit((
                 'No raster layers are loaded. Load a GeoTIFF to use autocomplete.',
-                None, None
+                Qgis.Critical, None, None
             ))
             return False
 
@@ -100,8 +100,9 @@ class AutocompleteTask(QgsTask):
         y_size = img_height * dy
 
         if x_size <= 0 or y_size <= 0:
-            self.errorReceived.emit((
+            self.messageReceived.emit((
                 'Could not render an image from the rasters (this is a plugin bug!).',
+                Qgis.Critical,
                 'https://github.com/BuntingLabs/buntinglabs-qgis-plugin/issues/new',
                 'Report Bug'
             ))
@@ -162,7 +163,7 @@ class AutocompleteTask(QgsTask):
             j1 = int((x1 - x_min) / dx)
 
         except Exception as e:
-            self.errorReceived.emit((str(e), None, None))
+            self.messageReceived.emit((str(e), Qgis.Critical, None, None))
             return False
 
         vector_payload = json.dumps({
@@ -219,23 +220,24 @@ class AutocompleteTask(QgsTask):
 
                 try:
                     error_details = json.loads(error_payload)
-                    self.errorReceived.emit((
+                    self.messageReceived.emit((
                         error_details.get('message'),
+                        Qgis.Critical,
                         error_details.get('link'),
                         error_details.get('link_text')
                     ))
                 except json.JSONDecodeError:
-                    self.errorReceived.emit((error_payload, None, None))
+                    self.messageReceived.emit((error_payload, Qgis.Critical, None, None))
 
                 return False
         except BrokenPipeError:
-            self.errorReceived.emit(('Got BrokenPipeError when trying to connect to inference server', None, None))
+            self.messageReceived.emit(('Autocomplete server connection was interrupted (BrokenPipeError)', Qgis.Critical, None, None))
             return False
         except ssl.SSLCertVerificationError:
-            self.errorReceived.emit(('SSL Certificate Verification Failed when connecting to inference server', None, None))
+            self.messageReceived.emit(('Autocomplete server failed SSL Certificate Verification', Qgis.Critical, None, None))
             return False
         except Exception as e:
-            self.errorReceived.emit((f'Error when trying to connect to inference server: {str(e)}', None, None))
+            self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None))
             return False
 
         buffer = ""
