@@ -91,6 +91,13 @@ class AutocompleteTask(QgsTask):
             ))
             return False
 
+        # First, if they clicked outside of all raster layers, warn them.
+        if len(intersecting_layers) == 0:
+            self.messageReceived.emit((
+                'No raster layers found beneath your autocomplete tool',
+                Qgis.Warning, None, None
+            ))
+
         # Size of the rectangle in the CRS coordinates
         window_size = self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/window_size_px", "1200")
         assert window_size in ["1200", "2500"] # Two allowed sizes
