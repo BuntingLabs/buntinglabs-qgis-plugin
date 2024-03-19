@@ -94,6 +94,15 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.snapIndicator = QgsSnapIndicator(plugin.iface.mapCanvas())
         self.snapper = plugin.iface.mapCanvas().snappingUtils()
 
+        self.streamingToleranceInPixels = int(QSettings().value('qgis/digitizing/stream_tolerance', 2))
+
+    def supportsTechnique(self, technique: Qgis.CaptureTechnique):
+        # we do not support shape or circular
+        return (technique in [
+            Qgis.CaptureTechnique.StraightSegments,
+            Qgis.CaptureTechnique.Streaming
+        ])
+
     def initRubberBand(self):
         if self.mode() == QgsMapToolCapture.CaptureLine:
             rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.LineGeometry)
@@ -174,9 +183,19 @@ class AIVectorizerTool(QgsMapToolCapture):
         else:
             pt = self.toMapCoordinates(e.pos())
 
+        # Support for streaming capture technique
+        if self.currentCaptureTechnique() == Qgis.CaptureTechnique.Streaming:
+            last_point = self.vertices[-1]
+
+            if pt.distance(last_point) > self.streamingToleranceInPixels:
+                # We need to add the point, but we ask that the parent class do this
+                # because we don't have access to mAllowAddingStreamingPoints
+                super(AIVectorizerTool, self).canvasMoveEvent(e)
+                self.vertices.append(pt)
+
         # Check if the shift key is being pressed
         # We have special existing-line-editing mode when shift is hit
-        if e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
+        elif e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
             (last_point, poly_geo) = self.shiftClickAdjustment(pt)
 
             if self.isCutting(last_point):
@@ -270,6 +289,17 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             self.stopCapturing()
             self.rb.reset()
+        elif e.button() == Qt.LeftButton and self.currentCaptureTechnique() == Qgis.CaptureTechnique.Streaming:
+            # Forces adding a vertex manually
+            if self.snapIndicator.match().type():
+                point = self.snapIndicator.match().point()
+            else:
+                point = self.toMapCoordinates(e.pos())
+
+            self.addVertex(point)
+            self.vertices.append(point)
+
+            self.startCapturing()
         elif e.button() == Qt.LeftButton:
             # QgsPointXY with map CRS
             if self.snapIndicator.match().type():
