@@ -182,7 +182,7 @@ class BuntingLabsPlugin:
         intro_text.setWordWrap(True)
         layout.addWidget(intro_text)
 
-        explain_text = QLabel("You will automatically be on our free tier, with access to 2,000 completions per month. No credit card is needed.")
+        explain_text = QLabel("You will automatically be on our free tier, with access to 7,000 completions per month. No credit card is needed.")
         explain_text.setWordWrap(True)
         layout.addWidget(explain_text)
 
