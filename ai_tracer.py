@@ -67,7 +67,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.rb = self.initRubberBand()
 
         # Options
-        self.num_completions = 50
+        self.num_completions = 100
 
         # List of QgsPointXY that represents the new feature
         # via QgsMapTool.toMapCoordinates(), it's in project CRS
