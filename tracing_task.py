@@ -163,18 +163,14 @@ class AutocompleteTask(QgsTask):
             # Call the function to convert the image to a geotiff tif and save it as bytes
             tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_max, x_max, y_min)
 
-            i0 = int((y0 - y_max) / dy) * -1
-            j0 = int((x0 - x_min) / dx)
-
-            i1 = int((y1 - y_max) / dy) * -1
-            j1 = int((x1 - x_min) / dx)
-
         except Exception as e:
             self.messageReceived.emit((str(e), Qgis.Critical, None, None))
             return False
 
+        # Get all coordinates
+        preceding_coordinates = [ [-(y - y_max)/dy, (x - x_min)/dx] for (x, y) in self.tracing_tool.vertices ]
         vector_payload = json.dumps({
-            'coordinates': [[i0, j0], [i1, j1]]
+            'coordinates': preceding_coordinates
         })
 
         options_payload = json.dumps({
@@ -182,13 +178,7 @@ class AutocompleteTask(QgsTask):
             'qgis_version': Qgis.QGIS_VERSION,
             'plugin_version': self.tracing_tool.plugin.plugin_version,
             'proj_epsg': mapEpsgCode,
-            'is_polygon': self.tracing_tool.mode() == QgsMapToolCapture.CapturePolygon,
-            # Rasters can be at all sorts of resolutions, but the current zoom level of
-            # the QGIS window gives us a hint as to the best zoom to autocomplete with.
-            "resolution_units_per_pixel": self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width(),
-            "proj_crs_units_per_screen_pixel": proj_crs_units_per_screen_pixel,
-            "topmost_res_at_pt": topmost_res_at_pt,
-            "dist_pixels_between_points": math.sqrt((i0-i1)**2 + (j0-j1)**2)
+            'is_polygon': self.tracing_tool.mode() == QgsMapToolCapture.CapturePolygon
         })
 
         boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'
