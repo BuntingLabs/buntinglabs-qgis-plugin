@@ -81,8 +81,6 @@ class AIVectorizerTool(QgsMapToolCapture):
         # will follow the moving cursor, once there's a vertex in the chamber
         self.startCapturing()
 
-        self.shift_state = ShiftClickState.HAS_NOT_CUT
-
         self.scissors_icon = QgsVertexMarker(plugin.iface.mapCanvas())
         self.scissors_icon.setIconType(QgsVertexMarker.ICON_X)
         self.scissors_icon.setColor(get_complement(self.digitizingStrokeColor()))
@@ -149,35 +147,6 @@ class AIVectorizerTool(QgsMapToolCapture):
     def handlePointReceived(self, args):
         self.addVertex(QgsPointXY(*args[0]))
         self.vertices.append(QgsPointXY(*args[0]))
-
-    def shiftClickAdjustment(self, pt, trimToPoint=False):
-
-        # Return the geometry prior
-        assert len(self.vertices) >= 2
-        last_point, last_point_idx = find_closest_projection_point(self.vertices, pt)
-
-        # Geometry for polygon
-        points = self.vertices[:last_point_idx+1] + [ last_point, pt, self.vertices[0] ]
-        poly_geo = QgsGeometry.fromPolygonXY([points])
-
-        if trimToPoint:
-            numToTrim = len(self.vertices)-last_point_idx-1
-            for _ in range(numToTrim):
-                self.undo()
-            self.vertices = self.vertices[:-numToTrim]
-            # After trimming, add back our projected point
-            self.addVertex(last_point)
-            self.vertices.append(last_point)
-
-        return (last_point, poly_geo)
-
-    def isCutting(self, last_point):
-        # Returns whether or not we are in cutting mode or draw forwards mode.
-        # If this would cut to the end of the line, though, of course we would not
-        # cut there, as it's a no-op.
-        wouldCutToEnd = last_point.distance(self.vertices[-1]) < 1e-8
-
-        return self.shift_state == ShiftClickState.HAS_NOT_CUT and not wouldCutToEnd
 
     def canvasMoveEvent(self, e):
         if self.isAutoSnapEnabled():
@@ -265,6 +234,9 @@ class AIVectorizerTool(QgsMapToolCapture):
                 QgsGeometry.fromPolylineXY(points),
                 None
             )
+            if len(self.predicted_points) > 0:
+                self.rb.setFillColor(get_complement(self.digitizingFillColor()))
+                self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
         elif self.mode() == QgsMapToolCapture.CapturePolygon and not (e.modifiers() & Qt.ShiftModifier):
             self.rb.setToGeometry(
                 poly_geo,
@@ -330,6 +302,13 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.vertices.append(point)
 
             self.startCapturing()
+        elif e.button() == Qt.LeftButton and e.modifiers() & Qt.ShiftModifier and len(self.predicted_points) > 0:
+            # Add points including the predicted_points
+            for pt in self.predicted_points:
+                self.addVertex(pt)
+                self.vertices.append(pt)
+
+            self.predicted_points = []
         elif e.button() == Qt.LeftButton:
             # QgsPointXY with map CRS
             if self.snapIndicator.match().type():
@@ -337,17 +316,9 @@ class AIVectorizerTool(QgsMapToolCapture):
             else:
                 point = self.toMapCoordinates(e.pos())
 
-            if len(self.vertices) >= 2 and (e.modifiers() & Qt.ShiftModifier) and self.shift_state == ShiftClickState.HAS_NOT_CUT:
-                self.shiftClickAdjustment(point, trimToPoint=True)
-                # Only trim once, then we're completing
-                self.shift_state = ShiftClickState.HAS_CUT
-                return
-
-            # Left clicking without shift resets us to normal autocomplete mode
-            if not (e.modifiers() & Qt.ShiftModifier):
-                self.shift_state = ShiftClickState.HAS_NOT_CUT
-
             wasDoubleClick = len(self.vertices) >= 1 and point.distance(self.vertices[-1]) == 0
+
+            self.predicted_points = []
 
             self.addVertex(point)
             self.vertices.append(point)
@@ -356,7 +327,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             # repeatedly call it
             self.startCapturing()
 
-            # Create our autocomplete task if we have >=2 vertices
+            # Analyze the map if we have >=2 vertices
             if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier) and not wasDoubleClick:
                 root = QgsProject.instance().layerTreeRoot()
                 rlayers = find_raster_layers(root)
@@ -369,7 +340,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                     project_crs
                 )
 
-                self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
+                # self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
                 self.autocomplete_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
 
                 self.autocomplete_task.parameterComputed.connect(lambda params: self.handleParameterComputed(params))
