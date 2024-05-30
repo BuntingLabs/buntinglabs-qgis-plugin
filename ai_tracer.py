@@ -96,6 +96,11 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         self.predicted_points = []
 
+        self.dx = None
+        self.dy = None
+        self.x_min = None
+        self.y_max = None
+
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
         # we do not support shape or circular
@@ -185,24 +190,19 @@ class AIVectorizerTool(QgsMapToolCapture):
         elif e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
 
             print('creating HoverTask')
-            ht = HoverTask(self, (self.dx, self.dy), (self.x_min, self.y_max), (pt.x(), pt.y()))
-            # ht.pointReceived.connect(lambda args: self.handlePointReceived(args))
-            # (last_point, poly_geo) = self.shiftClickAdjustment(pt)
-            ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
-            def handleGeometryReceived(o, pts):
-                o.predicted_points = [QgsPointXY(*pt) for pt in pts]
+            if self.dx is not None and self.dy is not None and self.x_min is not None and self.y_max is not None:
+                ht = HoverTask(self, (self.dx, self.dy), (self.x_min, self.y_max), (pt.x(), pt.y()))
 
-            # Replace the lambda with the method call
-            ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
+                ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
+                def handleGeometryReceived(o, pts):
+                    o.predicted_points = [QgsPointXY(*pt) for pt in pts]
 
-            # ht.geometryReceived.connect(lambda pts: self.rb.setToGeometry(
-            #     QgsGeometry.fromPolylineXY([self.vertices[-1]] + ),
-            #     None
-            # ))
+                # Replace the lambda with the method call
+                ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
 
-            QgsApplication.taskManager().addTask(
-                ht,
-            )
+                QgsApplication.taskManager().addTask(
+                    ht,
+                )
 
             last_point = self.vertices[-1]
             # if self.isCutting(last_point):

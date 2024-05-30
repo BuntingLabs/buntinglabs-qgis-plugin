@@ -305,21 +305,23 @@ class HoverTask(QgsTask):
 
     def run(self):
         print('running HoverTask')
-        # i = y, j = x
-        # note that negative i (or y) is up
-        x0, y0 = self.tracing_tool.vertices[-2]
-        x1, y1 = self.tracing_tool.vertices[-1]
-        x2, y2 = self.cursor_x, self.cursor_y
-
-        # px0, py0 = -(y0 - self.y_max) / self.dy, (x0 - self.x_min) / self.dx
-        px1, py1 = -(y1 - self.y_max) / self.dy, (x1 - self.x_min) / self.dx
-        px2, py2 = -(y2 - self.y_max) / self.dy, (x2 - self.x_min) / self.dx
-
-        headers = {
-            'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo")
-        }
 
         try:
+
+            # i = y, j = x
+            # note that negative i (or y) is up
+            x0, y0 = self.tracing_tool.vertices[-2]
+            x1, y1 = self.tracing_tool.vertices[-1]
+            x2, y2 = self.cursor_x, self.cursor_y
+
+            # px0, py0 = -(y0 - self.y_max) / self.dy, (x0 - self.x_min) / self.dx
+            px1, py1 = -(y1 - self.y_max) / self.dy, (x1 - self.x_min) / self.dx
+            px2, py2 = -(y2 - self.y_max) / self.dy, (x2 - self.x_min) / self.dx
+
+            headers = {
+                'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo")
+            }
+
             print('connecting to staging server...')
             conn = http.client.HTTPSConnection("fly-inference-staging-night-2042.fly.dev")
             conn.request("GET", f"/v2?x1={px1}&y1={py1}&x2={px2}&y2={py2}", headers=headers)
@@ -357,7 +359,7 @@ class HoverTask(QgsTask):
             transformed_points = [((jx * self.dx) + self.x_min, self.y_max - (ix * self.dy)) for (ix, jx) in path_points]
 
             self.geometryReceived.emit(transformed_points)
-        except json.JSONDecodeError as e:
+        except Exception as e:
             print('e', e)
             self.messageReceived.emit(('Failed to parse JSON response from server', Qgis.Critical, None, None))
             return False
