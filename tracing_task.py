@@ -51,6 +51,9 @@ class AutocompleteTask(QgsTask):
     # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
     messageReceived = pyqtSignal(tuple)
 
+    # (dx, dy, x_min, y_max)
+    parameterComputed = pyqtSignal(tuple)
+
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs):
         super().__init__(
             'Bunting Labs AI Vectorizer background task for ML inference',
@@ -81,8 +84,12 @@ class AutocompleteTask(QgsTask):
         # Use the resolution of the topmost raster layer
         topmost_res_at_pt = rupps[0] if len(intersecting_layers) >= 1 else proj_crs_units_per_screen_pixel
 
+        # Rendering resolution in units per pixel
         dx = max(proj_crs_units_per_screen_pixel, topmost_res_at_pt)
         dy = dx
+        # Quadruple the resolution
+        # dx *= 4
+        # dy *= 4
 
         if len(self.rlayers) == 0:
             self.messageReceived.emit((
@@ -125,6 +132,8 @@ class AutocompleteTask(QgsTask):
         x_max = cx + x_size / 2
         y_min = cy - y_size / 2
         y_max = cy + y_size / 2
+
+        self.parameterComputed.emit((dx, dy, x_min, y_max))
 
         # create image
         # Format_RGB888 is 24-bit (8 bits each) for each color channel, unlike
@@ -263,6 +272,95 @@ class AutocompleteTask(QgsTask):
                 yn = y_max - (ix * dy)
 
                 self.pointReceived.emit(((xn, yn), 1.0))
+
+        return True
+
+    def finished(self, result):
+        pass
+
+    def cancel(self):
+        super().cancel()
+
+
+
+class HoverTask(QgsTask):
+    # This task can run in the background of QGIS, streaming results
+    # back from the inference server.
+
+    geometryReceived = pyqtSignal(list)
+    # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
+    messageReceived = pyqtSignal(tuple)
+
+    def __init__(self, tracing_tool, d_params, xy_params, cursor_pt):
+        super().__init__(
+            'Bunting Labs AI Vectorizer background task for ML inference',
+            QgsTask.CanCancel
+        )
+
+        self.tracing_tool = tracing_tool
+
+        (self.dx, self.dy) = d_params
+        (self.x_min, self.y_max) = xy_params
+        (self.cursor_x, self.cursor_y) = cursor_pt
+
+    def run(self):
+        print('running HoverTask')
+        # i = y, j = x
+        # note that negative i (or y) is up
+        x0, y0 = self.tracing_tool.vertices[-2]
+        x1, y1 = self.tracing_tool.vertices[-1]
+        x2, y2 = self.cursor_x, self.cursor_y
+
+        # px0, py0 = -(y0 - self.y_max) / self.dy, (x0 - self.x_min) / self.dx
+        px1, py1 = -(y1 - self.y_max) / self.dy, (x1 - self.x_min) / self.dx
+        px2, py2 = -(y2 - self.y_max) / self.dy, (x2 - self.x_min) / self.dx
+
+        headers = {
+            'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo")
+        }
+
+        try:
+            print('connecting to staging server...')
+            conn = http.client.HTTPSConnection("fly-inference-staging-night-2042.fly.dev")
+            conn.request("GET", f"/v2?x1={px1}&y1={py1}&x2={px2}&y2={py2}", headers=headers)
+            res = conn.getresponse()
+            if res.status != 200:
+                error_payload = res.read().decode('utf-8')
+
+                try:
+                    error_details = json.loads(error_payload)
+                    self.messageReceived.emit((
+                        error_details.get('message'),
+                        Qgis.Critical,
+                        error_details.get('link'),
+                        error_details.get('link_text')
+                    ))
+                except json.JSONDecodeError:
+                    self.messageReceived.emit((error_payload, Qgis.Critical, None, None))
+
+                return False
+        except BrokenPipeError:
+            self.messageReceived.emit(('Autocomplete server connection was interrupted (BrokenPipeError)', Qgis.Critical, None, None))
+            return False
+        except ssl.SSLCertVerificationError:
+            self.messageReceived.emit(('Autocomplete server failed SSL Certificate Verification', Qgis.Critical, None, None))
+            return False
+        except Exception as e:
+            self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None))
+            return False
+
+        try:
+            response_data = res.read().decode('utf-8')
+            print('response data', response_data)
+            path_points = json.loads(response_data)
+
+            transformed_points = [((jx * self.dx) + self.x_min, self.y_max - (ix * self.dy)) for (ix, jx) in path_points]
+
+            self.geometryReceived.emit(transformed_points)
+        except json.JSONDecodeError as e:
+            print('e', e)
+            self.messageReceived.emit(('Failed to parse JSON response from server', Qgis.Critical, None, None))
+            return False
 
         return True
 

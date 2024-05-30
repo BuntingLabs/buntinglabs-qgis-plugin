@@ -11,7 +11,7 @@ from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
     QgsPoint, QgsWkbTypes, QgsLayerTreeLayer
 
-from .tracing_task import AutocompleteTask
+from .tracing_task import AutocompleteTask, HoverTask
 
 def get_complement(color):
     r, g, b, a = color.red(), color.green(), color.blue(), color.alpha()
@@ -95,6 +95,8 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.snapper = plugin.iface.mapCanvas().snappingUtils()
 
         self.streamingToleranceInPixels = int(QSettings().value('qgis/digitizing/stream_tolerance', 2))
+
+        self.predicted_points = []
 
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
@@ -204,25 +206,45 @@ class AIVectorizerTool(QgsMapToolCapture):
         # Check if the shift key is being pressed
         # We have special existing-line-editing mode when shift is hit
         elif e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
-            (last_point, poly_geo) = self.shiftClickAdjustment(pt)
 
-            if self.isCutting(last_point):
-                # Shift means our last vertex should effectively be the closest point to the line
-                self.scissors_icon.setCenter(last_point)
-                self.scissors_icon.show()
+            print('creating HoverTask')
+            ht = HoverTask(self, (self.dx, self.dy), (self.x_min, self.y_max), (pt.x(), pt.y()))
+            # ht.pointReceived.connect(lambda args: self.handlePointReceived(args))
+            # (last_point, poly_geo) = self.shiftClickAdjustment(pt)
+            ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
+            def handleGeometryReceived(o, pts):
+                o.predicted_points = [QgsPointXY(*pt) for pt in pts]
 
-                # Hide the rubber band
-                self.rb.reset()
+            # Replace the lambda with the method call
+            ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
 
-                return
-            else:
-                # We've already cut, so now we're drawing lines without autocomplete.
-                last_point = self.vertices[-1]
-                self.scissors_icon.hide()
+            # ht.geometryReceived.connect(lambda pts: self.rb.setToGeometry(
+            #     QgsGeometry.fromPolylineXY([self.vertices[-1]] + ),
+            #     None
+            # ))
 
-                # Use complement color
-                self.rb.setFillColor(get_complement(self.digitizingFillColor()))
-                self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
+            QgsApplication.taskManager().addTask(
+                ht,
+            )
+
+            last_point = self.vertices[-1]
+            # if self.isCutting(last_point):
+            #     # Shift means our last vertex should effectively be the closest point to the line
+            #     self.scissors_icon.setCenter(last_point)
+            #     self.scissors_icon.show()
+
+            #     # Hide the rubber band
+            #     self.rb.reset()
+
+            #     return
+            # else:
+            #     # We've already cut, so now we're drawing lines without autocomplete.
+            #     last_point = self.vertices[-1]
+            #     self.scissors_icon.hide()
+
+            #     # Use complement color
+            #     self.rb.setFillColor(get_complement(self.digitizingFillColor()))
+            #     self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
         else:
             last_point = self.vertices[-1]
 
@@ -237,13 +259,13 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.rb.setStrokeColor(self.digitizingStrokeColor())
 
         # geometry depends on capture mode
-        if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) < 2):
-            points = [last_point, pt]
+        if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) < 2) and not (e.modifiers() & Qt.ShiftModifier):
+            points = [last_point] + self.predicted_points + [pt]
             self.rb.setToGeometry(
                 QgsGeometry.fromPolylineXY(points),
                 None
             )
-        elif self.mode() == QgsMapToolCapture.CapturePolygon:
+        elif self.mode() == QgsMapToolCapture.CapturePolygon and not (e.modifiers() & Qt.ShiftModifier):
             self.rb.setToGeometry(
                 poly_geo,
                 None
@@ -350,9 +372,19 @@ class AIVectorizerTool(QgsMapToolCapture):
                 self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
                 self.autocomplete_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
 
+                self.autocomplete_task.parameterComputed.connect(lambda params: self.handleParameterComputed(params))
+
                 QgsApplication.taskManager().addTask(
                     self.autocomplete_task,
                 )
+
+    def handleParameterComputed(self, params):
+        (dx, dy, x_min, y_max) = params
+
+        self.dx = dx
+        self.dy = dy
+        self.x_min = x_min
+        self.y_max = y_max
 
     def maybeCancelTask(self):
         # Cancels the task if it's running
