@@ -148,6 +148,14 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.addVertex(QgsPointXY(*args[0]))
         self.vertices.append(QgsPointXY(*args[0]))
 
+    def trimVerticesToPoint(self, vertices, pt):
+        assert len(vertices) >= 2
+
+        last_point, last_point_idx = find_closest_projection_point(vertices, pt)
+        points = vertices[:last_point_idx+1] + [last_point]
+
+        return points
+
     def canvasMoveEvent(self, e):
         if self.isAutoSnapEnabled():
             snapMatch = self.snapper.snapToMap(e.pos())
@@ -229,14 +237,20 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # geometry depends on capture mode
         if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) < 2) and not (e.modifiers() & Qt.ShiftModifier):
-            points = [last_point] + self.predicted_points + [pt]
+            if len(self.predicted_points) > 0:
+                # trim predicted points
+                trimmedPredictedPoints = self.trimVerticesToPoint(self.predicted_points, pt)
+                points = [last_point] + trimmedPredictedPoints + [pt]
+
+                self.rb.setFillColor(get_complement(self.digitizingFillColor()))
+                self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
+            else:
+                points = [last_point, pt]
+
             self.rb.setToGeometry(
                 QgsGeometry.fromPolylineXY(points),
                 None
             )
-            if len(self.predicted_points) > 0:
-                self.rb.setFillColor(get_complement(self.digitizingFillColor()))
-                self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
         elif self.mode() == QgsMapToolCapture.CapturePolygon and not (e.modifiers() & Qt.ShiftModifier):
             self.rb.setToGeometry(
                 poly_geo,
