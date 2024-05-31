@@ -10,6 +10,7 @@ from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsVertexMarker, \
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
     QgsPoint, QgsWkbTypes, QgsLayerTreeLayer
+from PyQt5.QtCore import pyqtSignal
 
 from .tracing_task import AutocompleteTask, HoverTask
 
@@ -58,6 +59,9 @@ class ShiftClickState(Enum):
 # polygon geometries. It handles the drawing of rubber bands on the
 # map canvas and the capturing of clicks to build the geometry.
 class AIVectorizerTool(QgsMapToolCapture):
+
+    predictedPointsReceived = pyqtSignal(tuple)
+
     def __init__(self, plugin):
         # Extend QgsMapToolCapture
         cadDockWidget = plugin.iface.cadDockWidget()
@@ -100,6 +104,9 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.dy = None
         self.x_min = None
         self.y_max = None
+
+        # listen to event
+        self.predictedPointsReceived.connect(lambda pts: self.updateRubberBand(self.vertices[-1], []))
 
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
@@ -196,6 +203,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                 ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
                 def handleGeometryReceived(o, pts):
                     o.predicted_points = [QgsPointXY(*pt) for pt in pts]
+                    self.predictedPointsReceived.emit((None,))
 
                 # Replace the lambda with the method call
                 ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
@@ -237,25 +245,32 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # geometry depends on capture mode
         if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) < 2) and not (e.modifiers() & Qt.ShiftModifier):
-            if len(self.predicted_points) > 0:
-                # trim predicted points
-                trimmedPredictedPoints = self.trimVerticesToPoint(self.predicted_points, pt)
-                points = [last_point] + trimmedPredictedPoints + [pt]
-
-                self.rb.setFillColor(get_complement(self.digitizingFillColor()))
-                self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
-            else:
-                points = [last_point, pt]
-
-            self.rb.setToGeometry(
-                QgsGeometry.fromPolylineXY(points),
-                None
-            )
+            self.updateRubberBand(last_point, [pt])
         elif self.mode() == QgsMapToolCapture.CapturePolygon and not (e.modifiers() & Qt.ShiftModifier):
             self.rb.setToGeometry(
                 poly_geo,
                 None
             )
+
+    def updateRubberBand(self, last_point, appended_points=[]):
+        if len(self.predicted_points) > 0:
+            # trim predicted points
+            if len(appended_points) > 0:
+                trimmedPredictedPoints = self.trimVerticesToPoint(self.predicted_points, appended_points[0])
+            else:
+                trimmedPredictedPoints = self.predicted_points
+
+            points = [last_point] + trimmedPredictedPoints + appended_points
+
+            self.rb.setFillColor(get_complement(self.digitizingFillColor()))
+            self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
+        else:
+            points = [last_point] + appended_points
+
+        self.rb.setToGeometry(
+            QgsGeometry.fromPolylineXY(points),
+            None
+        )
 
     def canvasPressEvent(self, e):
         pass
