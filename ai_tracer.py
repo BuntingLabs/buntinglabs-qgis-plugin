@@ -1,6 +1,7 @@
 # Copyright 2023 Bunting Labs, Inc.
 
 from enum import Enum
+from collections import namedtuple
 
 from qgis.PyQt.QtCore import Qt, QSettings, QUrl
 from qgis.PyQt.QtWidgets import QPushButton
@@ -52,6 +53,8 @@ def find_raster_layers(node):
 class ShiftClickState(Enum):
     HAS_NOT_CUT = 1
     HAS_CUT = 2
+
+MapCacheEntry = namedtuple('MapCacheEntry', ['uniq_id', 'dx', 'dy', 'x_min', 'y_max', 'window_size'])
 
 # QgsMapToolCapture is a subclass of QgsMapToolEdit that provides
 # additional functionality for map tools that capture geometry. It
@@ -107,6 +110,8 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # listen to event
         self.predictedPointsReceived.connect(lambda pts: self.updateRubberBand(self.vertices[-1], []))
+
+        self.map_cache = None # MapCacheEntry
 
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
@@ -197,20 +202,26 @@ class AIVectorizerTool(QgsMapToolCapture):
         elif e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
 
             print('creating HoverTask')
-            if self.dx is not None and self.dy is not None and self.x_min is not None and self.y_max is not None:
-                ht = HoverTask(self, (self.dx, self.dy), (self.x_min, self.y_max), (pt.x(), pt.y()))
+            # -(y2 - self.y_max) / self.dy, (x2 - self.x_min) / self.dx
+            pxys = [self.vertices[-1], (pt.x(), pt.y())]
+            (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
+            pxys = [((px - x_min) / dx, -(py - y_max) / dy) for (px, py) in pxys]
 
-                ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
-                def handleGeometryReceived(o, pts):
-                    o.predicted_points = [QgsPointXY(*pt) for pt in pts]
-                    self.predictedPointsReceived.emit((None,))
+            ht = HoverTask(self, self.map_cache, pxys)
 
-                # Replace the lambda with the method call
-                ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
+            ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
+            def handleGeometryReceived(o, pts):
+                transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in pts]
 
-                QgsApplication.taskManager().addTask(
-                    ht,
-                )
+                o.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
+                self.predictedPointsReceived.emit((None,))
+
+            # Replace the lambda with the method call
+            ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
+
+            QgsApplication.taskManager().addTask(
+                ht,
+            )
 
             last_point = self.vertices[-1]
             # if self.isCutting(last_point):
@@ -371,20 +382,14 @@ class AIVectorizerTool(QgsMapToolCapture):
 
                 # self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
                 self.autocomplete_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
-
-                self.autocomplete_task.parameterComputed.connect(lambda params: self.handleParameterComputed(params))
+                self.autocomplete_task.cacheEntryCreated.connect(lambda args: self.handleCacheEntryCreated(*args))
 
                 QgsApplication.taskManager().addTask(
                     self.autocomplete_task,
                 )
 
-    def handleParameterComputed(self, params):
-        (dx, dy, x_min, y_max) = params
-
-        self.dx = dx
-        self.dy = dy
-        self.x_min = x_min
-        self.y_max = y_max
+    def handleCacheEntryCreated(self, uniq_id, dx, dy, x_min, y_max, window_size):
+        self.map_cache = MapCacheEntry(uniq_id, dx, dy, x_min, y_max, window_size)
 
     def maybeCancelTask(self):
         # Cancels the task if it's running

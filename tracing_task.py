@@ -53,6 +53,7 @@ class AutocompleteTask(QgsTask):
 
     # (dx, dy, x_min, y_max)
     parameterComputed = pyqtSignal(tuple)
+    cacheEntryCreated = pyqtSignal(tuple)
 
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs):
         super().__init__(
@@ -273,6 +274,9 @@ class AutocompleteTask(QgsTask):
 
                 self.pointReceived.emit(((xn, yn), 1.0))
 
+        uniq_id = buffer
+        self.cacheEntryCreated.emit((uniq_id, dx, dy, x_min, y_max, window_size))
+
         return True
 
     def finished(self, result):
@@ -291,7 +295,7 @@ class HoverTask(QgsTask):
     # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
     messageReceived = pyqtSignal(tuple)
 
-    def __init__(self, tracing_tool, d_params, xy_params, cursor_pt):
+    def __init__(self, tracing_tool, cache_entry, pxys):
         super().__init__(
             'Bunting Labs AI Vectorizer background task for ML inference',
             QgsTask.CanCancel
@@ -299,24 +303,15 @@ class HoverTask(QgsTask):
 
         self.tracing_tool = tracing_tool
 
-        (self.dx, self.dy) = d_params
-        (self.x_min, self.y_max) = xy_params
-        (self.cursor_x, self.cursor_y) = cursor_pt
+        self.cache_entry = cache_entry
+        self.pxys = pxys
 
     def run(self):
         print('running HoverTask')
 
         try:
-
             # i = y, j = x
             # note that negative i (or y) is up
-            x0, y0 = self.tracing_tool.vertices[-2]
-            x1, y1 = self.tracing_tool.vertices[-1]
-            x2, y2 = self.cursor_x, self.cursor_y
-
-            # px0, py0 = -(y0 - self.y_max) / self.dy, (x0 - self.x_min) / self.dx
-            px1, py1 = -(y1 - self.y_max) / self.dy, (x1 - self.x_min) / self.dx
-            px2, py2 = -(y2 - self.y_max) / self.dy, (x2 - self.x_min) / self.dx
 
             headers = {
                 'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo")
@@ -324,7 +319,7 @@ class HoverTask(QgsTask):
 
             print('connecting to staging server...')
             conn = http.client.HTTPSConnection("fly-inference-staging-night-2042.fly.dev")
-            conn.request("GET", f"/v2?x1={px1}&y1={py1}&x2={px2}&y2={py2}", headers=headers)
+            conn.request("GET", f"/v2?x1={self.pxys[0][0]}&y1={self.pxys[0][1]}&x2={self.pxys[1][0]}&y2={self.pxys[1][1]}&uniq_id={self.cache_entry.uniq_id}", headers=headers)
             res = conn.getresponse()
             if res.status != 200:
                 error_payload = res.read().decode('utf-8')
@@ -356,9 +351,7 @@ class HoverTask(QgsTask):
             print('response data', response_data)
             path_points = json.loads(response_data)
 
-            transformed_points = [((jx * self.dx) + self.x_min, self.y_max - (ix * self.dy)) for (ix, jx) in path_points]
-
-            self.geometryReceived.emit(transformed_points)
+            self.geometryReceived.emit(path_points)
         except Exception as e:
             print('e', e)
             self.messageReceived.emit(('Failed to parse JSON response from server', Qgis.Critical, None, None))
