@@ -115,12 +115,12 @@ class AIVectorizerTool(QgsMapToolCapture):
         # will follow the moving cursor, once there's a vertex in the chamber
         self.startCapturing()
 
-        self.scissors_icon = QgsVertexMarker(plugin.iface.mapCanvas())
-        self.scissors_icon.setIconType(QgsVertexMarker.ICON_X)
-        self.scissors_icon.setColor(get_complement(self.digitizingStrokeColor()))
-        self.scissors_icon.setIconSize(18)
-        self.scissors_icon.setPenWidth(5)
-        self.scissors_icon.setZValue(1000)
+        # self.scissors_icon = QgsVertexMarker(plugin.iface.mapCanvas())
+        # self.scissors_icon.setIconType(QgsVertexMarker.ICON_X)
+        # self.scissors_icon.setColor(get_complement(self.digitizingStrokeColor()))
+        # self.scissors_icon.setIconSize(18)
+        # self.scissors_icon.setPenWidth(5)
+        # self.scissors_icon.setZValue(1000)
 
         # For snapping
         self.snapIndicator = QgsSnapIndicator(plugin.iface.mapCanvas())
@@ -227,7 +227,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # Check if the shift key is being pressed
         # We have special existing-line-editing mode when shift is hit
-        elif e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2 and self.map_cache is not None:
+        if len(self.vertices) >= 2 and self.map_cache is not None and not (e.modifiers() & Qt.ShiftModifier):
 
             print('creating HoverTask')
             # -(y2 - self.y_max) / self.dy, (x2 - self.x_min) / self.dx
@@ -280,17 +280,19 @@ class AIVectorizerTool(QgsMapToolCapture):
             #     self.rb.setFillColor(get_complement(self.digitizingFillColor()))
             #     self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
         else:
+            # Either they're holding down shift, or we don't have the map cache for this line.
+            self.predicted_points = []
             last_point = self.vertices[-1]
 
-            self.scissors_icon.hide()
+            # self.scissors_icon.hide()
 
             # Close it!
             points = [ self.vertices[0], last_point, QgsPointXY(pt.x(), pt.y()), self.vertices[0]]
 
             poly_geo = QgsGeometry.fromPolygonXY([points])
 
-            self.rb.setFillColor(self.digitizingFillColor())
-            self.rb.setStrokeColor(self.digitizingStrokeColor())
+            self.rb.setFillColor(get_complement(self.digitizingFillColor()))
+            self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
 
         # geometry depends on capture mode
         if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) < 2) and not (e.modifiers() & Qt.ShiftModifier):
@@ -472,5 +474,5 @@ class AIVectorizerTool(QgsMapToolCapture):
     def deactivate(self):
         self.rb.reset()
 
-        self.scissors_icon.hide()
+        # self.scissors_icon.hide()
         self.plugin.action.setChecked(False)
