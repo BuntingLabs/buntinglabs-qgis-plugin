@@ -116,6 +116,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.vertices = []
 
         self.autocomplete_task = None
+        self.hover_task_is_active = False
 
         # And take control and go full on editing mode
         self.activate()
@@ -252,23 +253,27 @@ class AIVectorizerTool(QgsMapToolCapture):
                 self.predictedPointsReceived.emit((None,))
             else:
                 print('cache MISS')
-                ht = HoverTask(self, self.map_cache, pxys)
+                if not self.hover_task_is_active:
+                    ht = HoverTask(self, self.map_cache, pxys)
 
-                ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
-                def handleGeometryReceived(self, pts):
-                    transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in pts]
+                    ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
+                    def handleGeometryReceived(self, pts):
+                        transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in pts]
 
-                    self.autocomplete_cache.set(self.map_cache.uniq_id, hover_px, hover_py, transformed_points)
+                        self.autocomplete_cache.set(self.map_cache.uniq_id, hover_px, hover_py, transformed_points)
 
-                    self.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
-                    self.predictedPointsReceived.emit((None,))
+                        self.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
+                        self.predictedPointsReceived.emit((None,))
 
-                # Replace the lambda with the method call
-                ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
+                        self.hover_task_is_active = False
 
-                QgsApplication.taskManager().addTask(
-                    ht,
-                )
+                    # Replace the lambda with the method call
+                    ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
+
+                    QgsApplication.taskManager().addTask(
+                        ht,
+                    )
+                    self.hover_task_is_active = True
 
             last_point = self.vertices[-1]
             # if self.isCutting(last_point):
