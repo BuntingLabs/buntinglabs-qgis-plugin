@@ -98,7 +98,7 @@ MapCacheEntry = namedtuple('MapCacheEntry', ['uniq_id', 'dx', 'dy', 'x_min', 'y_
 # map canvas and the capturing of clicks to build the geometry.
 class AIVectorizerTool(QgsMapToolCapture):
 
-    predictedPointsReceived = pyqtSignal(tuple)
+    # predictedPointsReceived = pyqtSignal(tuple)
 
     def __init__(self, plugin):
         # Extend QgsMapToolCapture
@@ -145,10 +145,10 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.y_max = None
 
         # listen to event
-        self.predictedPointsReceived.connect(lambda pts: self.updateRubberBand(self.vertices[-1], []))
+        # self.predictedPointsReceived.connect(lambda pts: )
 
         self.map_cache = None # MapCacheEntry
-        self.autocomplete_cache = AutocompleteCache(250, 3.0)
+        self.autocomplete_cache = AutocompleteCache(250, round_px=3.0)
 
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
@@ -234,11 +234,12 @@ class AIVectorizerTool(QgsMapToolCapture):
         #         super(AIVectorizerTool, self).canvasMoveEvent(e)
         #         self.vertices.append(pt)
 
+        hover_cache_entry = []
         # Check if the shift key is being pressed
         # We have special existing-line-editing mode when shift is hit
         if len(self.vertices) >= 2 and self.map_cache is not None and not (e.modifiers() & Qt.ShiftModifier):
 
-            print('creating HoverTask')
+            # print('creating HoverTask')
             # -(y2 - self.y_max) / self.dy, (x2 - self.x_min) / self.dx
             pxys = [self.vertices[-1], (pt.x(), pt.y())]
             (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
@@ -248,27 +249,33 @@ class AIVectorizerTool(QgsMapToolCapture):
             hover_px, hover_py = pxys[-1][0], pxys[-1][1]
             hover_cache_entry = self.autocomplete_cache.get(self.map_cache.uniq_id, hover_px, hover_py)
             if hover_cache_entry is not None:
-                print('cache HIT')
-                self.predicted_points = [QgsPointXY(*pt) for pt in hover_cache_entry]
-                self.predictedPointsReceived.emit((None,))
+                print('cache HIT', hover_cache_entry)
+                # self.predicted_points = [QgsPointXY(*pt) for pt in hover_cache_entry]
+                # self.predictedPointsReceived.emit((None,))
             else:
-                print('cache MISS')
+                # TODO behavior when we can't immediately load something?
+                hover_cache_entry = []
+
+                print('cache MISS', self.hover_task_is_active, 'hover', hover_px, hover_py)
                 if not self.hover_task_is_active:
                     ht = HoverTask(self, self.map_cache, pxys)
 
                     ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
-                    def handleGeometryReceived(self, pts):
-                        transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in pts]
+                    def handleTrajectoriesReceived(self, trajectories):
+                        for trajectory in trajectories:
+                            transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in trajectory['trajectory']]
 
-                        self.autocomplete_cache.set(self.map_cache.uniq_id, hover_px, hover_py, transformed_points)
+                            trajectory_py, trajectory_px = trajectory['simulation_endpoint']
+                            print('hover', hover_px, hover_py, 'trajectory', trajectory_px, trajectory_py)
+                            self.autocomplete_cache.set(self.map_cache.uniq_id, trajectory_px, trajectory_py, transformed_points)
 
-                        self.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
-                        self.predictedPointsReceived.emit((None,))
-
-                        self.hover_task_is_active = False
+                        # self.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
+                        # self.predictedPointsReceived.emit((None,))
 
                     # Replace the lambda with the method call
-                    ht.geometryReceived.connect(lambda pts: handleGeometryReceived(self, pts))
+                    ht.trajectoriesReceived.connect(lambda pts: handleTrajectoriesReceived(self, pts))
+                    ht.taskCompleted.connect(lambda: self.dropHoverTask())
+                    ht.taskTerminated.connect(lambda: self.dropHoverTask())
 
                     QgsApplication.taskManager().addTask(
                         ht,
@@ -295,7 +302,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             #     self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
         else:
             # Either they're holding down shift, or we don't have the map cache for this line.
-            self.predicted_points = []
+            # self.predicted_points = []
             last_point = self.vertices[-1]
 
             # self.scissors_icon.hide()
@@ -309,21 +316,23 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
 
         # geometry depends on capture mode
-        if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) < 2) and not (e.modifiers() & Qt.ShiftModifier):
-            self.updateRubberBand(last_point, [pt])
+        if self.mode() == QgsMapToolCapture.CaptureLine and not (e.modifiers() & Qt.ShiftModifier):
+            self.updateRubberBand(last_point, hover_cache_entry, [pt])
         elif self.mode() == QgsMapToolCapture.CapturePolygon and not (e.modifiers() & Qt.ShiftModifier):
             self.rb.setToGeometry(
                 poly_geo,
                 None
             )
 
-    def updateRubberBand(self, last_point, appended_points=[]):
-        if len(self.predicted_points) > 0:
+    def updateRubberBand(self, last_point, trajectory_points, appended_points=[]):
+        closest_predicted_points = [QgsPointXY(*pt) for pt in trajectory_points]
+
+        if len(closest_predicted_points) > 0:
             # trim predicted points
             if len(appended_points) > 0:
-                trimmedPredictedPoints = self.trimVerticesToPoint(self.predicted_points, appended_points[0])
+                trimmedPredictedPoints = self.trimVerticesToPoint(closest_predicted_points, appended_points[0])
             else:
-                trimmedPredictedPoints = self.predicted_points
+                trimmedPredictedPoints = closest_predicted_points
 
             points = [last_point] + trimmedPredictedPoints + appended_points
 
@@ -339,6 +348,9 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def canvasPressEvent(self, e):
         pass
+
+    def dropHoverTask(self):
+        self.hover_task_is_active = False
 
     def canvasReleaseEvent(self, e):
         # Either click will cancel an ongoing autocomplete
@@ -396,13 +408,14 @@ class AIVectorizerTool(QgsMapToolCapture):
         #     self.vertices.append(point)
 
         #     self.startCapturing()
-        elif e.button() == Qt.LeftButton and e.modifiers() & Qt.ShiftModifier and len(self.predicted_points) > 0:
+        elif e.button() == Qt.LeftButton and e.modifiers() & Qt.ShiftModifier:# and len(self.predicted_points) > 0:
             # Add points including the predicted_points
-            for pt in self.predicted_points:
-                self.addVertex(pt)
-                self.vertices.append(pt)
+            # for pt in self.predicted_points:
+            #     self.addVertex(pt)
+            #     self.vertices.append(pt)
 
-            self.predicted_points = []
+            # self.predicted_points = []
+            pass
         elif e.button() == Qt.LeftButton:
             # QgsPointXY with map CRS
             if self.snapIndicator.match().type():
@@ -412,7 +425,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             wasDoubleClick = len(self.vertices) >= 1 and point.distance(self.vertices[-1]) == 0
 
-            self.predicted_points = []
+            # self.predicted_points = []
 
             self.addVertex(point)
             self.vertices.append(point)

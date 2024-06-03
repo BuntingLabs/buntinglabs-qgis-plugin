@@ -57,7 +57,7 @@ class AutocompleteTask(QgsTask):
 
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs):
         super().__init__(
-            'Bunting Labs AI Vectorizer background task for ML inference',
+            'Bunting Labs AI Vectorizer is processing your map...',
             QgsTask.CanCancel
         )
 
@@ -67,6 +67,8 @@ class AutocompleteTask(QgsTask):
         self.project_crs = project_crs
 
     def run(self):
+        self.setProgress(0.0)
+
         # By default, we zoom out 2.5x from the user's perspective.
         proj_crs_units_per_screen_pixel = 2.5 * (self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width())
 
