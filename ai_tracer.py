@@ -150,11 +150,11 @@ class AIVectorizerTool(QgsMapToolCapture):
         ])
 
     # Wrap currentCaptureTechnique() because it was only added in 3.32.
-    def isStreamingCapture(self):
-        if hasattr(self, 'currentCaptureTechnique') and hasattr(Qgis, 'CaptureTechnique'):
-            if hasattr(Qgis.CaptureTechnique, 'Streaming'):
-                return self.currentCaptureTechnique() == Qgis.CaptureTechnique.Streaming
-        return False
+    # def isStreamingCapture(self):
+    #     if hasattr(self, 'currentCaptureTechnique') and hasattr(Qgis, 'CaptureTechnique'):
+    #         if hasattr(Qgis.CaptureTechnique, 'Streaming'):
+    #             return self.currentCaptureTechnique() == Qgis.CaptureTechnique.Streaming
+    #     return False
 
     def initRubberBand(self):
         if self.mode() == QgsMapToolCapture.CaptureLine:
@@ -216,14 +216,14 @@ class AIVectorizerTool(QgsMapToolCapture):
             pt = self.toMapCoordinates(e.pos())
 
         # Support for streaming capture technique
-        if self.isStreamingCapture():
-            last_point = self.vertices[-1]
+        # if self.isStreamingCapture():
+        #     last_point = self.vertices[-1]
 
-            if pt.distance(last_point) > self.streamingToleranceInPixels:
-                # We need to add the point, but we ask that the parent class do this
-                # because we don't have access to mAllowAddingStreamingPoints
-                super(AIVectorizerTool, self).canvasMoveEvent(e)
-                self.vertices.append(pt)
+        #     if pt.distance(last_point) > self.streamingToleranceInPixels:
+        #         # We need to add the point, but we ask that the parent class do this
+        #         # because we don't have access to mAllowAddingStreamingPoints
+        #         super(AIVectorizerTool, self).canvasMoveEvent(e)
+        #         self.vertices.append(pt)
 
         # Check if the shift key is being pressed
         # We have special existing-line-editing mode when shift is hit
@@ -369,17 +369,17 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             self.stopCapturing()
             self.rb.reset()
-        elif e.button() == Qt.LeftButton and self.isStreamingCapture():
-            # Forces adding a vertex manually
-            if self.snapIndicator.match().type():
-                point = self.snapIndicator.match().point()
-            else:
-                point = self.toMapCoordinates(e.pos())
+        # elif e.button() == Qt.LeftButton and self.isStreamingCapture():
+        #     # Forces adding a vertex manually
+        #     if self.snapIndicator.match().type():
+        #         point = self.snapIndicator.match().point()
+        #     else:
+        #         point = self.toMapCoordinates(e.pos())
 
-            self.addVertex(point)
-            self.vertices.append(point)
+        #     self.addVertex(point)
+        #     self.vertices.append(point)
 
-            self.startCapturing()
+        #     self.startCapturing()
         elif e.button() == Qt.LeftButton and e.modifiers() & Qt.ShiftModifier and len(self.predicted_points) > 0:
             # Add points including the predicted_points
             for pt in self.predicted_points:
