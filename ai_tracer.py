@@ -56,22 +56,30 @@ class ShiftClickState(Enum):
 
 from collections import OrderedDict
 
-AutocompleteCacheEntry = namedtuple('AutocompleteCacheEntry', ['uniq_id', 'px', 'py'])
+# (n_px, n_py) are "normalized" positions
+AutocompleteCacheEntry = namedtuple('AutocompleteCacheEntry', ['uniq_id', 'n_px', 'n_py'])
 
 class AutocompleteCache:
-    def __init__(self, max_size):
+    def __init__(self, max_size, round_px=1.0):
         self.cache = OrderedDict()
         self.max_size = max_size
+        self.round_px = round_px
 
-    def get(self, key):
-        if key not in self.cache:
-            return None
-        else:
+    def get(self, uniq_id: str, px: float, py: float):
+        key = AutocompleteCacheEntry(uniq_id, int(px / self.round_px), int(py / self.round_px))
+
+        # Cache hit, use it.
+        if key in self.cache:
             # Move the key to the end to show that it was recently used
             self.cache.move_to_end(key)
             return self.cache[key]
 
-    def set(self, key, value):
+        # Cache miss
+        return None
+
+    def set(self, uniq_id: str, px: float, py: float, value):
+        key = AutocompleteCacheEntry(uniq_id, int(px / self.round_px), int(py / self.round_px))
+
         if key in self.cache:
             # Move the key to the end to show that it was recently used
             self.cache.move_to_end(key)
@@ -139,7 +147,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.predictedPointsReceived.connect(lambda pts: self.updateRubberBand(self.vertices[-1], []))
 
         self.map_cache = None # MapCacheEntry
-        self.autocomplete_cache = AutocompleteCache(250)
+        self.autocomplete_cache = AutocompleteCache(250, 3.0)
 
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
@@ -236,22 +244,23 @@ class AIVectorizerTool(QgsMapToolCapture):
             pxys = [((px - x_min) / dx, -(py - y_max) / dy) for (px, py) in pxys]
 
             # Check cache
-            hover_cache_entry = AutocompleteCacheEntry(self.map_cache.uniq_id, int(pxys[-1][0]), int(pxys[-1][1]))
-            if self.autocomplete_cache.get(hover_cache_entry):
+            hover_px, hover_py = pxys[-1][0], pxys[-1][1]
+            hover_cache_entry = self.autocomplete_cache.get(self.map_cache.uniq_id, hover_px, hover_py)
+            if hover_cache_entry is not None:
                 print('cache HIT')
-                self.predicted_points = [QgsPointXY(*pt) for pt in self.autocomplete_cache.get(hover_cache_entry)]
+                self.predicted_points = [QgsPointXY(*pt) for pt in hover_cache_entry]
                 self.predictedPointsReceived.emit((None,))
             else:
                 print('cache MISS')
                 ht = HoverTask(self, self.map_cache, pxys)
 
                 ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
-                def handleGeometryReceived(o, pts):
+                def handleGeometryReceived(self, pts):
                     transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in pts]
 
-                    self.autocomplete_cache.set(hover_cache_entry, transformed_points)
+                    self.autocomplete_cache.set(self.map_cache.uniq_id, hover_px, hover_py, transformed_points)
 
-                    o.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
+                    self.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
                     self.predictedPointsReceived.emit((None,))
 
                 # Replace the lambda with the method call
