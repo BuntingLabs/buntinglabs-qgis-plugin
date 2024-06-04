@@ -268,11 +268,11 @@ class AutocompleteTask(QgsTask):
                 line, buffer = buffer.split('\n', 1)
                 new_point = json.loads(line)
 
-                ix, jx = new_point[0], new_point[1]
+                iy, jx = new_point[0], new_point[1]
 
                 # convert to xy
                 xn = (jx * dx) + x_min
-                yn = y_max - (ix * dy)
+                yn = y_max - (iy * dy)
 
                 self.pointReceived.emit(((xn, yn), 1.0))
 
@@ -293,7 +293,7 @@ class HoverTask(QgsTask):
     # This task can run in the background of QGIS, streaming results
     # back from the inference server.
 
-    geometryReceived = pyqtSignal(list)
+    trajectoriesReceived = pyqtSignal(dict)
     # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
     messageReceived = pyqtSignal(tuple)
 
@@ -350,10 +350,12 @@ class HoverTask(QgsTask):
 
         try:
             response_data = res.read().decode('utf-8')
-            print('response data', response_data)
-            path_points = json.loads(response_data)
+            # print('response data', response_data)
+            # This response is a number of simulated trajectories through the
+            # raster space; choose the trajectory closest to the cursor.
+            simulated_trajectories = json.loads(response_data)
 
-            self.geometryReceived.emit(path_points)
+            self.trajectoriesReceived.emit(simulated_trajectories)
         except Exception as e:
             print('e', e)
             self.messageReceived.emit(('Failed to parse JSON response from server', Qgis.Critical, None, None))

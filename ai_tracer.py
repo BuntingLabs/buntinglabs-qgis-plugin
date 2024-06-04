@@ -14,6 +14,7 @@ from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
 from PyQt5.QtCore import pyqtSignal
 
 from .tracing_task import AutocompleteTask, HoverTask
+from .trajectory import Trajectory, TrajectoryClick
 
 def get_complement(color):
     r, g, b, a = color.red(), color.green(), color.blue(), color.alpha()
@@ -150,6 +151,8 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.map_cache = None # MapCacheEntry
         self.autocomplete_cache = AutocompleteCache(250, round_px=3.0)
 
+        self.traj_tries = dict()
+
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
         # we do not support shape or circular
@@ -262,12 +265,15 @@ class AIVectorizerTool(QgsMapToolCapture):
 
                     ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
                     def handleTrajectoriesReceived(self, trajectories):
-                        for trajectory in trajectories:
-                            transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in trajectory['trajectory']]
+                        other = Trajectory.from_dict(trajectories)
+                        self.traj_tries[self.map_cache.uniq_id].merge(other)
 
-                            trajectory_py, trajectory_px = trajectory['simulation_endpoint']
-                            print('hover', hover_px, hover_py, 'trajectory', trajectory_px, trajectory_py)
-                            self.autocomplete_cache.set(self.map_cache.uniq_id, trajectory_px, trajectory_py, transformed_points)
+                        # for trajectory in trajectories:
+                        #     transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in trajectory['trajectory']]
+
+                        #     trajectory_py, trajectory_px = trajectory['simulation_endpoint']
+                        #     print('hover', hover_px, hover_py, 'trajectory', trajectory_px, trajectory_py)
+                            # self.autocomplete_cache.set(self.map_cache.uniq_id, trajectory_px, trajectory_py, transformed_points)
 
                         # self.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
                         # self.predictedPointsReceived.emit((None,))
@@ -327,14 +333,35 @@ class AIVectorizerTool(QgsMapToolCapture):
     def updateRubberBand(self, last_point, trajectory_points, appended_points=[]):
         closest_predicted_points = [QgsPointXY(*pt) for pt in trajectory_points]
 
+        if len(appended_points) > 0 and self.map_cache is not None:
+            mouse_pt = appended_points[-1]
+            print('mouse_pt', mouse_pt)
+
+            (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
+            px, py = mouse_pt.x(), mouse_pt.y()
+            hover_px, hover_py = ((px - x_min) / dx, -(py - y_max) / dy)
+
+            closest = self.traj_tries[self.map_cache.uniq_id].search((hover_py, hover_px))
+            print("closest", closest)
+            print('trie', self.traj_tries[self.map_cache.uniq_id].to_dict())
+
+            if closest is not None:
+                # convert to raster coordinates
+                raster_coordinates = []
+                for (iy, jx) in closest:
+                    xn = (jx * dx) + x_min
+                    yn = y_max - (iy * dy)
+                    raster_coordinates.append((xn, yn))
+
+            closest_predicted_points = [QgsPointXY(*pt) for pt in raster_coordinates]
+            appended_points = []
+
         if len(closest_predicted_points) > 0:
             # trim predicted points
-            if len(appended_points) > 0:
-                trimmedPredictedPoints = self.trimVerticesToPoint(closest_predicted_points, appended_points[0])
-            else:
-                trimmedPredictedPoints = closest_predicted_points
+            if len(appended_points) > 0 and len(closest_predicted_points) >= 2:
+                closest_predicted_points = self.trimVerticesToPoint(closest_predicted_points, appended_points[0])
 
-            points = [last_point] + trimmedPredictedPoints + appended_points
+            points = [last_point] + closest_predicted_points + appended_points
 
             self.rb.setFillColor(get_complement(self.digitizingFillColor()))
             self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
@@ -457,6 +484,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def handleCacheEntryCreated(self, uniq_id, dx, dy, x_min, y_max, window_size):
         self.map_cache = MapCacheEntry(uniq_id, dx, dy, x_min, y_max, window_size)
+        self.traj_tries[uniq_id] = Trajectory()
 
     def maybeCancelTask(self):
         # Cancels the task if it's running
@@ -492,6 +520,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.stopCapturing()
             self.vertices = []
             self.rb.reset()
+            self.map_cache = None
 
             e.accept()
             return
