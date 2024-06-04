@@ -228,6 +228,35 @@ class AIVectorizerTool(QgsMapToolCapture):
         else:
             pt = self.toMapCoordinates(e.pos())
 
+        # Relative to map_cache
+        if self.map_cache is not None and self.map_cache.uniq_id in self.spatial_indices:
+            (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
+            hover_px, hover_py = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
+
+            # First, see if we have a cached route at this point.
+            nearest_id = self.spatial_indices[self.map_cache.uniq_id][0].nearestNeighbor(QgsPointXY(hover_px, hover_py), 1)[0]
+            nearest_point = self.spatial_indices[self.map_cache.uniq_id][1][nearest_id]
+
+            # print('nearest_point', nearest_point)
+            # get nearest_point as serialized
+
+            from .trajectory import serialize_pos
+            path_to_nearest_point = self.traj_tries[self.map_cache.uniq_id].path_from_i(
+                serialize_pos(int(nearest_point.x()), int(nearest_point.y())),
+                self.spatial_indices[self.map_cache.uniq_id][2]
+            )
+
+            # print('nearest_point', nearest_point)
+            # print('nearest_id', nearest_id)
+            # print('path_to_nearest_point', path_to_nearest_point)
+        else:
+            pass
+            # print('map cache', self.map_cache)
+            # print('self.spatial_indices', self.spatial_indices)
+
+        # print('canvasMoveEvent took ', time.time() - start_time)
+
+
         hover_cache_entry = []
         # Check if the shift key is being pressed
         # We have special existing-line-editing mode when shift is hit
@@ -243,14 +272,15 @@ class AIVectorizerTool(QgsMapToolCapture):
             hover_px, hover_py = pxys[-1][0], pxys[-1][1]
             hover_cache_entry = self.autocomplete_cache.get(self.map_cache.uniq_id, hover_px, hover_py)
             if hover_cache_entry is not None:
-                print('cache HIT', hover_cache_entry)
+                pass
+                # print('cache HIT', hover_cache_entry)
                 # self.predicted_points = [QgsPointXY(*pt) for pt in hover_cache_entry]
                 # self.predictedPointsReceived.emit((None,))
             else:
                 # TODO behavior when we can't immediately load something?
                 hover_cache_entry = []
 
-                print('cache MISS', self.hover_task_is_active, 'hover', hover_px, hover_py)
+                # print('cache MISS', self.hover_task_is_active, 'hover', hover_px, hover_py)
                 if not self.hover_task_is_active:
                     ht = HoverTask(self, self.map_cache, pxys)
 
@@ -334,14 +364,14 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         if len(appended_points) > 0 and self.map_cache is not None:
             mouse_pt = appended_points[-1]
-            print('mouse_pt', mouse_pt)
+            # print('mouse_pt', mouse_pt)
 
             (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
             px, py = mouse_pt.x(), mouse_pt.y()
             hover_px, hover_py = ((px - x_min) / dx, -(py - y_max) / dy)
 
             closest = self.traj_tries[self.map_cache.uniq_id].search((hover_py, hover_px))
-            print("closest", closest)
+            # print("closest", closest)
 
             if closest is not None:
                 # convert to raster coordinates
@@ -355,14 +385,17 @@ class AIVectorizerTool(QgsMapToolCapture):
             appended_points = []
 
         end_time = time.time()
-        print(f"Hover, search time: {end_time - start_time} seconds")
+        # print(f"Hover, search time: {end_time - start_time} seconds")
 
         if self.map_cache is not None:
             if self.map_cache.uniq_id not in self.spatial_indices:
-                print('spatial indices', self.spatial_indices)
+                pass
+                # print('spatial indices', self.spatial_indices)
             else:
-                nearest_id = self.spatial_indices[self.map_cache.uniq_id].nearestNeighbor(QgsPointXY(hover_px, hover_py), 1)[0]
-                print('nearest_id', nearest_id)
+                nearest_id = self.spatial_indices[self.map_cache.uniq_id][0].nearestNeighbor(QgsPointXY(hover_px, hover_py), 1)[0]
+                # print('nearest_id', nearest_id)
+                nearest_point = self.spatial_indices[self.map_cache.uniq_id][1][nearest_id]
+                # print('nearest_point', nearest_point)
                 # nearest_feature = self.spatial_indices[self.map_cache.uniq_id].feature(nearest_id)
                 # print(nearest_feature.geometry().asPoint())
 
