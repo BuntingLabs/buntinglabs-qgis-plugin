@@ -1,5 +1,5 @@
 # Copyright 2023 Bunting Labs, Inc.
-
+import time
 from enum import Enum
 from collections import namedtuple
 
@@ -152,6 +152,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.autocomplete_cache = AutocompleteCache(250, round_px=3.0)
 
         self.traj_tries = dict()
+        self.spatial_indices = dict()
 
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
@@ -227,16 +228,6 @@ class AIVectorizerTool(QgsMapToolCapture):
         else:
             pt = self.toMapCoordinates(e.pos())
 
-        # Support for streaming capture technique
-        # if self.isStreamingCapture():
-        #     last_point = self.vertices[-1]
-
-        #     if pt.distance(last_point) > self.streamingToleranceInPixels:
-        #         # We need to add the point, but we ask that the parent class do this
-        #         # because we don't have access to mAllowAddingStreamingPoints
-        #         super(AIVectorizerTool, self).canvasMoveEvent(e)
-        #         self.vertices.append(pt)
-
         hover_cache_entry = []
         # Check if the shift key is being pressed
         # We have special existing-line-editing mode when shift is hit
@@ -266,8 +257,14 @@ class AIVectorizerTool(QgsMapToolCapture):
                     ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
                     def handleTrajectoriesReceived(self, trajectories):
                         other = Trajectory.from_dict(trajectories)
-                        self.traj_tries[self.map_cache.uniq_id].merge(other)
 
+                        start_time = time.time()
+                        self.traj_tries[self.map_cache.uniq_id].merge(other)
+                        print(f"Merge took {time.time() - start_time:.4f} seconds")
+
+                        start_time = time.time()
+                        self.spatial_indices[self.map_cache.uniq_id] = self.traj_tries[self.map_cache.uniq_id].to_spatial_index()
+                        print(f"Spatial index creation took {time.time() - start_time:.4f} seconds")
                         # for trajectory in trajectories:
                         #     transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in trajectory['trajectory']]
 
@@ -333,6 +330,8 @@ class AIVectorizerTool(QgsMapToolCapture):
     def updateRubberBand(self, last_point, trajectory_points, appended_points=[]):
         closest_predicted_points = [QgsPointXY(*pt) for pt in trajectory_points]
 
+        start_time = time.time()
+
         if len(appended_points) > 0 and self.map_cache is not None:
             mouse_pt = appended_points[-1]
             print('mouse_pt', mouse_pt)
@@ -343,7 +342,6 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             closest = self.traj_tries[self.map_cache.uniq_id].search((hover_py, hover_px))
             print("closest", closest)
-            print('trie', self.traj_tries[self.map_cache.uniq_id].to_dict())
 
             if closest is not None:
                 # convert to raster coordinates
@@ -355,6 +353,18 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             closest_predicted_points = [QgsPointXY(*pt) for pt in raster_coordinates]
             appended_points = []
+
+        end_time = time.time()
+        print(f"Hover, search time: {end_time - start_time} seconds")
+
+        if self.map_cache is not None:
+            if self.map_cache.uniq_id not in self.spatial_indices:
+                print('spatial indices', self.spatial_indices)
+            else:
+                nearest_id = self.spatial_indices[self.map_cache.uniq_id].nearestNeighbor(QgsPointXY(hover_px, hover_py), 1)[0]
+                print('nearest_id', nearest_id)
+                # nearest_feature = self.spatial_indices[self.map_cache.uniq_id].feature(nearest_id)
+                # print(nearest_feature.geometry().asPoint())
 
         if len(closest_predicted_points) > 0:
             # trim predicted points
