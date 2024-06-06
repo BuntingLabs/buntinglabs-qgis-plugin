@@ -446,6 +446,10 @@ class BuntingLabsPlugin:
 
         context_window_group = QButtonGroup(self.api_key_dialog)
 
+        tiny_window_option = QRadioButton("600x600 pixels")
+        context_window_group.addButton(tiny_window_option)
+        layout.addWidget(tiny_window_option)
+
         small_window_option = QRadioButton("1200x1200 pixels")
         context_window_group.addButton(small_window_option)
         layout.addWidget(small_window_option)
@@ -456,11 +460,12 @@ class BuntingLabsPlugin:
 
         if self.settings.value(SETTING_CONTEXT_WINDOW_SIZE, "1200") == "2500":
             large_window_option.setChecked(True)
+        elif self.settings.value(SETTING_CONTEXT_WINDOW_SIZE, "1200") == "600":
+            tiny_window_option.setChecked(True)
         else:
             small_window_option.setChecked(True)
 
-        context_window_group.buttonClicked.connect(lambda btn: self.settings.setValue(SETTING_CONTEXT_WINDOW_SIZE, "2500" if btn.text() == "2500x2500 pixels" else "1200"))
-
+        context_window_group.buttonClicked.connect(lambda btn: self.settings.setValue(SETTING_CONTEXT_WINDOW_SIZE, "2500" if btn.text() == "2500x2500 pixels" else ("600" if btn.text() == "600x600 pixels" else "1200")))
         save_button = QPushButton("Save")
         save_button.clicked.connect(self.saveSettings)
         layout.addWidget(save_button)

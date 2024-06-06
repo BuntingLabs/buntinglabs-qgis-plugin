@@ -2,6 +2,7 @@
 import time
 from enum import Enum
 from collections import namedtuple
+import cProfile, pstats, io
 
 from qgis.PyQt.QtCore import Qt, QSettings, QUrl
 from qgis.PyQt.QtWidgets import QPushButton
@@ -215,6 +216,8 @@ class AIVectorizerTool(QgsMapToolCapture):
         return points
 
     def canvasMoveEvent(self, e):
+        start_time = time.time()
+
         if self.isAutoSnapEnabled():
             snapMatch = self.snapper.snapToMap(e.pos())
             self.snapIndicator.setMatch(snapMatch)
@@ -295,6 +298,8 @@ class AIVectorizerTool(QgsMapToolCapture):
                         start_time = time.time()
                         self.spatial_indices[self.map_cache.uniq_id] = self.traj_tries[self.map_cache.uniq_id].to_spatial_index()
                         print(f"Spatial index creation took {time.time() - start_time:.4f} seconds")
+
+                        # QgsProject.instance().addMapLayer(self.spatial_indices[self.map_cache.uniq_id][-1])
                         # for trajectory in trajectories:
                         #     transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in trajectory['trajectory']]
 
@@ -521,9 +526,76 @@ class AIVectorizerTool(QgsMapToolCapture):
                 self.autocomplete_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
                 self.autocomplete_task.cacheEntryCreated.connect(lambda args: self.handleCacheEntryCreated(*args))
 
+                self.autocomplete_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
+
                 QgsApplication.taskManager().addTask(
                     self.autocomplete_task,
                 )
+
+    def handleGraphConstructed(self, pts_cost, pts_paths):
+        graph_nodes = list(pts_paths.keys())
+        # graph_vector_points = []
+        dx, dy, x_min, y_max = self.map_cache.dx, self.map_cache.dy, self.map_cache.x_min, self.map_cache.y_max
+        # for node in graph_nodes:
+        #     jx, iy = map(int, node.split('_'))
+        #     xn = (jx * dx) + x_min
+        #     yn = y_max - (iy * dy)
+        #     graph_vector_points.append((xn, yn))
+        # Create a vector layer for graph nodes
+        node_layer = QgsVectorLayer("Point?crs=EPSG:3857", "Graph Nodes", "memory")
+        node_pr = node_layer.dataProvider()
+        
+        # Create a vector layer for graph paths
+        path_layer = QgsVectorLayer("LineString?crs=EPSG:3857", "Graph Paths", "memory")
+        path_pr = path_layer.dataProvider()
+        
+        for nodes, path_in_between in pts_paths.items():
+            ix, iy, jx, jy = map(int, nodes.split('_'))
+            
+            # Add nodes to the node layer
+            for x, y in [(ix, iy), (jx, jy)]:
+                point = QgsPointXY(x * dx + x_min, y_max - y * dy)
+                feature = QgsFeature()
+                feature.setGeometry(QgsGeometry.fromPointXY(point))
+                node_pr.addFeature(feature)
+            
+            # Add path to the path layer
+            line_points = [(ix * dx + x_min, y_max - iy * dy)] + \
+                          [(x * dx + x_min, y_max - y * dy) for y, x in path_in_between] + \
+                          [(jx * dx + x_min, y_max - jy * dy)]
+            line_string = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in line_points])
+            feature = QgsFeature()
+            feature.setGeometry(line_string)
+            path_pr.addFeature(feature)
+        
+        node_layer.updateExtents()
+        path_layer.updateExtents()
+        QgsProject.instance().addMapLayer(node_layer)
+        QgsProject.instance().addMapLayer(path_layer)
+
+        #     coord_ix = (ix * dx) + x_min
+        #     coord_iy = y_max - (iy * dy)
+        #     coord_jx = (jx * dx) + x_min
+        #     coord_jy = y_max - (jy * dy)
+        #     print(f'nodes is {ix}_{iy}_{jx}_{jy}')
+        #     print('nodes', nodes)
+        #     print('path_in_between', path_in_between)
+        # import numpy as np
+        # pts_cost_np = np.array(pts_cost)
+        # print(pts_cost_np)
+
+        # layer = QgsVectorLayer("Point?crs=EPSG:3857", "Graph Points", "memory")
+        # pr = layer.dataProvider()
+        # for x, y in graph_vector_points:
+        #     pt = QgsPointXY(x, y)
+        #     feature = QgsFeature()
+        #     feature.setGeometry(QgsGeometry.fromPointXY(pt))
+        #     pr.addFeature(feature)
+        # layer.updateExtents()
+        # QgsProject.instance().addMapLayer(layer)
+
+        # print('pts_cost', pts_cost)
+        # print('pts_paths', pts_paths)
 
     def handleCacheEntryCreated(self, uniq_id, dx, dy, x_min, y_max, window_size):
         self.map_cache = MapCacheEntry(uniq_id, dx, dy, x_min, y_max, window_size)

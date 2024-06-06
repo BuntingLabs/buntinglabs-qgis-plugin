@@ -5,6 +5,7 @@ import http.client
 import json
 from osgeo import gdal, osr
 import numpy as np
+import time
 import ssl
 import math
 
@@ -54,6 +55,8 @@ class AutocompleteTask(QgsTask):
     # (dx, dy, x_min, y_max)
     parameterComputed = pyqtSignal(tuple)
     cacheEntryCreated = pyqtSignal(tuple)
+
+    graphConstructed = pyqtSignal(tuple)
 
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs):
         super().__init__(
@@ -110,7 +113,7 @@ class AutocompleteTask(QgsTask):
 
         # Size of the rectangle in the CRS coordinates
         window_size = self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/window_size_px", "1200")
-        assert window_size in ["1200", "2500"] # Two allowed sizes
+        assert window_size in ["600", "1200", "2500"] # Two allowed sizes
 
         img_width, img_height = int(window_size), int(window_size)
         x_size = img_width * dx
@@ -220,10 +223,14 @@ class AutocompleteTask(QgsTask):
             'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo")
         }
 
+        self.setProgress(10.0)
+
         try:
-            conn = http.client.HTTPSConnection("qgis-api.buntinglabs.com")
+            print('connecting to staging server...')
+            conn = http.client.HTTPSConnection("fly-inference-staging-night-2042.fly.dev")
             conn.request("POST", "/v1", body, headers)
             res = conn.getresponse()
+            self.setProgress(80.0)
             if res.status != 200:
                 error_payload = res.read().decode('utf-8')
 
@@ -249,35 +256,22 @@ class AutocompleteTask(QgsTask):
             self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None))
             return False
 
-        buffer = ""
-        while True:
-            # For some reason, read errors with IncompleteRead?
-            try:
-                chunk = res.read(16)
-                if not chunk:
-                    break
+        buffer = res.read().decode('utf-8')
+        data = json.loads(buffer)
+        random_key = data['key']
+        pts_cost = data['costs']
+        pts_paths = data['paths']
 
-                buffer += chunk.decode('utf-8')
-            except http.client.IncompleteRead as e:
-                buffer += e.partial.decode('utf-8')
+        print('random key', random_key)
+        print('pts_cost', pts_cost)
+        print('pts_path', pts_paths)
 
-            while '\n' in buffer:
-                if self.isCanceled():
-                    return False
-
-                line, buffer = buffer.split('\n', 1)
-                new_point = json.loads(line)
-
-                iy, jx = new_point[0], new_point[1]
-
-                # convert to xy
-                xn = (jx * dx) + x_min
-                yn = y_max - (iy * dy)
-
-                self.pointReceived.emit(((xn, yn), 1.0))
-
-        uniq_id = buffer
+        uniq_id = random_key
         self.cacheEntryCreated.emit((uniq_id, dx, dy, x_min, y_max, window_size))
+
+        self.graphConstructed.emit((pts_cost, pts_paths))
+
+
 
         return True
 
@@ -310,6 +304,8 @@ class HoverTask(QgsTask):
 
     def run(self):
         print('running HoverTask')
+        self.setProgress(0.0)
+        self.time_start = time.time()
 
         try:
             # i = y, j = x
@@ -319,10 +315,20 @@ class HoverTask(QgsTask):
                 'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo")
             }
 
+            # Do this for a 20x20 grid around the cursor (step 2)
+            x2s, y2s = [], []
+            for step_x in range(-20, 20, 2):
+                for step_y in range(-20, 20, 2):
+                    x2, y2 = self.pxys[0][0] + step_x, self.pxys[0][1] + step_y
+                    x2s.append(str(int(x2)))
+                    y2s.append(str(int(y2)))
+            x2s, y2s = ','.join(x2s), ','.join(y2s)
+
             print('connecting to staging server...')
             conn = http.client.HTTPSConnection("fly-inference-staging-night-2042.fly.dev")
-            conn.request("GET", f"/v2?x1={self.pxys[0][0]}&y1={self.pxys[0][1]}&x2={self.pxys[1][0]}&y2={self.pxys[1][1]}&uniq_id={self.cache_entry.uniq_id}", headers=headers)
+            conn.request("GET", f"/v2?x1={self.pxys[0][0]}&y1={self.pxys[0][1]}&x2={x2s}&y2={y2s}&uniq_id={self.cache_entry.uniq_id}", headers=headers)
             res = conn.getresponse()
+            self.setProgress(85.0)
             if res.status != 200:
                 error_payload = res.read().decode('utf-8')
 
@@ -354,6 +360,8 @@ class HoverTask(QgsTask):
             # This response is a number of simulated trajectories through the
             # raster space; choose the trajectory closest to the cursor.
             simulated_trajectories = json.loads(response_data)
+            end_time = time.time()
+            print(f"Hover, start to finish time: {end_time - self.time_start} seconds")
 
             self.trajectoriesReceived.emit(simulated_trajectories)
         except Exception as e:
