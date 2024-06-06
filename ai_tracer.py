@@ -306,6 +306,8 @@ class AIVectorizerTool(QgsMapToolCapture):
             path, cost = dijkstra(graph_nodes, pts_costs, idx_for_closest(self.vertices[-1]), idx_for_closest(pt))
             print("Path:", path)
             print("Cost:", cost)
+            # [(251, 262), (251, 255), (288, 84), (220, 49)]
+            path_map_pts = [ QgsPointXY(node[0] * dx + x_min, y_max - node[1] * dy) for node in path ]
 
             # closest_node = min(graph_nodes, key=lambda node: (node[0] - hover_px) ** 2 + (node[1] - hover_py) ** 2)
             # # print('closest_node', closest_node)
@@ -314,7 +316,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             # print('closest_map_x', closest_map_x, 'closest_map_y', closest_map_y)
 
             self.rb.setToGeometry(
-                QgsGeometry.fromPolylineXY([nearest_node_pt, pt]),
+                QgsGeometry.fromPolylineXY(path_map_pts),
                 None
             )
             return
