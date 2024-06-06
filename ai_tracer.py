@@ -11,7 +11,7 @@ from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsVertexMarker, \
     QgsSnapIndicator
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
-    QgsPoint, QgsWkbTypes, QgsLayerTreeLayer
+    QgsPoint, QgsWkbTypes, QgsLayerTreeLayer, QgsSpatialIndex
 from PyQt5.QtCore import pyqtSignal
 
 from .tracing_task import AutocompleteTask, HoverTask
@@ -154,6 +154,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         self.traj_tries = dict()
         self.spatial_indices = dict()
+        self.graphs = dict()
 
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
@@ -232,22 +233,49 @@ class AIVectorizerTool(QgsMapToolCapture):
             pt = self.toMapCoordinates(e.pos())
 
         # Relative to map_cache
-        if self.map_cache is not None and self.map_cache.uniq_id in self.spatial_indices:
+        if self.map_cache is not None and self.map_cache.uniq_id in self.graphs:
             (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
             hover_px, hover_py = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
 
-            # First, see if we have a cached route at this point.
-            nearest_id = self.spatial_indices[self.map_cache.uniq_id][0].nearestNeighbor(QgsPointXY(hover_px, hover_py), 1)[0]
-            nearest_point = self.spatial_indices[self.map_cache.uniq_id][1][nearest_id]
+            # print('hover', self.graphs[self.map_cache.uniq_id])
+            (pts_paths, pts_costs, sindex, sindex_points) = self.graphs['penis']#self.map_cache.uniq_id]
 
-            # print('nearest_point', nearest_point)
-            # get nearest_point as serialized
+            nearest_node_ids = sindex.nearestNeighbor(pt, neighbors=1)
+            node_sq_distances = [ (node_id, (pt.x() - sindex_points[node_id].x()) ** 2 + (pt.y() - sindex_points[node_id].y()) ** 2) for node_id in nearest_node_ids if node_id < len(sindex_points)]
+            nearest_node_id = min(node_sq_distances, key=lambda x: x[1])[0]
+            nearest_node_pt = sindex_points[nearest_node_id]
+            # print('nearest', nearest_node_pt.x(), nearest_node_pt.y(), 'pt', pt.x(), pt.y())
 
-            from .trajectory import serialize_pos
-            path_to_nearest_point = self.traj_tries[self.map_cache.uniq_id].path_from_i(
-                serialize_pos(int(nearest_point.x()), int(nearest_point.y())),
-                self.spatial_indices[self.map_cache.uniq_id][2]
+            # create list of nodes
+            # graph_nodes = []
+            # for path in pts_paths.keys():
+            #     ix, iy, jx, jy = map(int, path.split('_'))
+
+            #     graph_nodes.extend([(ix, iy), (jx, jy)])
+            
+            # closest_node = min(graph_nodes, key=lambda node: (node[0] - hover_px) ** 2 + (node[1] - hover_py) ** 2)
+            # # print('closest_node', closest_node)
+
+            # closest_map_x, closest_map_y = closest_node[0] * dx + x_min, y_max - closest_node[1] * dy
+            # print('closest_map_x', closest_map_x, 'closest_map_y', closest_map_y)
+
+            self.rb.setToGeometry(
+                QgsGeometry.fromPolylineXY([nearest_node_pt, pt]),
+                None
             )
+            return
+            # First, see if we have a cached route at this point.
+            # nearest_id = self.spatial_indices[self.map_cache.uniq_id][0].nearestNeighbor(QgsPointXY(hover_px, hover_py), 1)[0]
+            # nearest_point = self.spatial_indices[self.map_cache.uniq_id][1][nearest_id]
+
+            # # print('nearest_point', nearest_point)
+            # # get nearest_point as serialized
+
+            # from .trajectory import serialize_pos
+            # path_to_nearest_point = self.traj_tries[self.map_cache.uniq_id].path_from_i(
+            #     serialize_pos(int(nearest_point.x()), int(nearest_point.y())),
+            #     self.spatial_indices[self.map_cache.uniq_id][2]
+            # )
 
             # print('nearest_point', nearest_point)
             # print('nearest_id', nearest_id)
@@ -549,15 +577,21 @@ class AIVectorizerTool(QgsMapToolCapture):
         path_layer = QgsVectorLayer("LineString?crs=EPSG:3857", "Graph Paths", "memory")
         path_pr = path_layer.dataProvider()
         
+        spatial_index, sindex_points, sindex_id = QgsSpatialIndex(), [], 0
         for nodes, path_in_between in pts_paths.items():
             ix, iy, jx, jy = map(int, nodes.split('_'))
-            
-            # Add nodes to the node layer
+
+            # Add nodes to the node layer and spatial index
             for x, y in [(ix, iy), (jx, jy)]:
                 point = QgsPointXY(x * dx + x_min, y_max - y * dy)
-                feature = QgsFeature()
+                feature = QgsFeature(sindex_id)
                 feature.setGeometry(QgsGeometry.fromPointXY(point))
                 node_pr.addFeature(feature)
+
+                spatial_index.addFeature(feature)
+                sindex_points.append(point)
+
+                sindex_id += 1
             
             # Add path to the path layer
             line_points = [(ix * dx + x_min, y_max - iy * dy)] + \
@@ -567,11 +601,9 @@ class AIVectorizerTool(QgsMapToolCapture):
             feature = QgsFeature()
             feature.setGeometry(line_string)
             path_pr.addFeature(feature)
-        
         node_layer.updateExtents()
         path_layer.updateExtents()
-        QgsProject.instance().addMapLayer(node_layer)
-        QgsProject.instance().addMapLayer(path_layer)
+        QgsProject.instance().addMapLayers([node_layer, path_layer], True)
 
         #     coord_ix = (ix * dx) + x_min
         #     coord_iy = y_max - (iy * dy)
@@ -596,6 +628,9 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # print('pts_cost', pts_cost)
         # print('pts_paths', pts_paths)
+        if self.map_cache is not None:
+            self.graphs[self.map_cache.uniq_id] = (pts_cost, pts_paths, spatial_index, sindex_points)
+            self.graphs['penis'] = (pts_cost, pts_paths, spatial_index, sindex_points)
 
     def handleCacheEntryCreated(self, uniq_id, dx, dy, x_min, y_max, window_size):
         self.map_cache = MapCacheEntry(uniq_id, dx, dy, x_min, y_max, window_size)
