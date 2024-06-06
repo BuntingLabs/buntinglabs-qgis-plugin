@@ -239,7 +239,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             hover_px, hover_py = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
 
             # print('hover', self.graphs[self.map_cache.uniq_id])
-            (pts_paths, pts_costs, sindex_points) = self.graphs['penis']#self.map_cache.uniq_id]
+            (pts_costs, pts_paths, sindex_points) = self.graphs['penis']#self.map_cache.uniq_id]
 
             curr_pt = np.array([[pt.x(), pt.y()]]) # [1, 2]
             dists = np.linalg.norm(sindex_points - curr_pt, axis=1) # [N,]
@@ -250,12 +250,63 @@ class AIVectorizerTool(QgsMapToolCapture):
             # print('nearest', nearest_node_pt.x(), nearest_node_pt.y(), 'pt', pt.x(), pt.y())
 
             # create list of nodes
-            # graph_nodes = []
-            # for path in pts_paths.keys():
-            #     ix, iy, jx, jy = map(int, path.split('_'))
+            graph_nodes = []
+            for path in pts_paths.keys():
+                ix, iy, jx, jy = map(int, path.split('_'))
 
-            #     graph_nodes.extend([(ix, iy), (jx, jy)])
-            
+                graph_nodes.extend([(ix, iy), (jx, jy)])
+
+            def idx_for_closest(pt: QgsPointXY):
+                img_x, img_y = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
+
+                dists = [(img_x - x) ** 2 + (img_y - y) ** 2 for x, y in graph_nodes]
+                return dists.index(min(dists))
+
+            import heapq
+            print('graph_nodes', graph_nodes)
+
+            def dijkstra(graph_nodes, pts_costs, start_idx, end_idx):
+                start, end = graph_nodes[start_idx], graph_nodes[end_idx]
+                queue = [(0, start)]
+                distances = {start: 0}
+                previous_nodes = {start: None}
+
+                while queue:
+                    current_distance, current_node = heapq.heappop(queue)
+
+                    if current_node == end:
+                        break
+
+                    ix, iy = current_node
+                    for neighbor in graph_nodes:
+                        if neighbor == current_node:
+                            continue
+                        jx, jy = neighbor
+                        edge_key1 = f"{ix}_{iy}_{jx}_{jy}"
+                        edge_key2 = f"{jx}_{jy}_{ix}_{iy}"
+                        edge_weight = min(pts_costs.get(edge_key1, float('inf')), pts_costs.get(edge_key2, float('inf')))
+
+                        if edge_weight == float('inf'):
+                            continue
+
+                        new_distance = current_distance + edge_weight
+                        if new_distance < distances.get(neighbor, float('inf')):
+                            distances[neighbor] = new_distance
+                            previous_nodes[neighbor] = current_node
+                            heapq.heappush(queue, (new_distance, neighbor))
+
+                path, current = [], end
+                while current is not None:
+                    path.append(current)
+                    current = previous_nodes[current]
+                path = path[::-1]
+
+                return path, distances.get(end, float('inf'))
+
+            path, cost = dijkstra(graph_nodes, pts_costs, idx_for_closest(self.vertices[-1]), idx_for_closest(pt))
+            print("Path:", path)
+            print("Cost:", cost)
+
             # closest_node = min(graph_nodes, key=lambda node: (node[0] - hover_px) ** 2 + (node[1] - hover_py) ** 2)
             # # print('closest_node', closest_node)
 
