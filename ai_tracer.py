@@ -13,6 +13,7 @@ from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
     QgsPoint, QgsWkbTypes, QgsLayerTreeLayer, QgsSpatialIndex
 from PyQt5.QtCore import pyqtSignal
+import numpy as np
 
 from .tracing_task import AutocompleteTask, HoverTask
 from .trajectory import Trajectory, TrajectoryClick
@@ -238,12 +239,14 @@ class AIVectorizerTool(QgsMapToolCapture):
             hover_px, hover_py = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
 
             # print('hover', self.graphs[self.map_cache.uniq_id])
-            (pts_paths, pts_costs, sindex, sindex_points) = self.graphs['penis']#self.map_cache.uniq_id]
+            (pts_paths, pts_costs, sindex_points) = self.graphs['penis']#self.map_cache.uniq_id]
 
-            nearest_node_ids = sindex.nearestNeighbor(pt, neighbors=1)
-            node_sq_distances = [ (node_id, (pt.x() - sindex_points[node_id].x()) ** 2 + (pt.y() - sindex_points[node_id].y()) ** 2) for node_id in nearest_node_ids if node_id < len(sindex_points)]
-            nearest_node_id = min(node_sq_distances, key=lambda x: x[1])[0]
-            nearest_node_pt = sindex_points[nearest_node_id]
+            curr_pt = np.array([[pt.x(), pt.y()]]) # [1, 2]
+            dists = np.linalg.norm(sindex_points - curr_pt, axis=1) # [N,]
+
+            nearest_node_id = np.argmin(dists)
+            nearest_node_pt = QgsPointXY(sindex_points[nearest_node_id][0], sindex_points[nearest_node_id][1])
+
             # print('nearest', nearest_node_pt.x(), nearest_node_pt.y(), 'pt', pt.x(), pt.y())
 
             # create list of nodes
@@ -577,21 +580,19 @@ class AIVectorizerTool(QgsMapToolCapture):
         path_layer = QgsVectorLayer("LineString?crs=EPSG:3857", "Graph Paths", "memory")
         path_pr = path_layer.dataProvider()
         
-        spatial_index, sindex_points, sindex_id = QgsSpatialIndex(), [], 0
+        import numpy as np
+        sindex_points = []
         for nodes, path_in_between in pts_paths.items():
             ix, iy, jx, jy = map(int, nodes.split('_'))
 
-            # Add nodes to the node layer and spatial index
+            # Add nodes to the node layer and sindex_points
             for x, y in [(ix, iy), (jx, jy)]:
                 point = QgsPointXY(x * dx + x_min, y_max - y * dy)
-                feature = QgsFeature(sindex_id)
+                feature = QgsFeature()
                 feature.setGeometry(QgsGeometry.fromPointXY(point))
                 node_pr.addFeature(feature)
 
-                spatial_index.addFeature(feature)
-                sindex_points.append(point)
-
-                sindex_id += 1
+                sindex_points.append([point.x(), point.y()])
             
             # Add path to the path layer
             line_points = [(ix * dx + x_min, y_max - iy * dy)] + \
@@ -628,9 +629,10 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # print('pts_cost', pts_cost)
         # print('pts_paths', pts_paths)
+        sindex_points = np.array(sindex_points)
         if self.map_cache is not None:
-            self.graphs[self.map_cache.uniq_id] = (pts_cost, pts_paths, spatial_index, sindex_points)
-            self.graphs['penis'] = (pts_cost, pts_paths, spatial_index, sindex_points)
+            self.graphs[self.map_cache.uniq_id] = (pts_cost, pts_paths, sindex_points)
+            self.graphs['penis'] = (pts_cost, pts_paths, sindex_points)
 
     def handleCacheEntryCreated(self, uniq_id, dx, dy, x_min, y_max, window_size):
         self.map_cache = MapCacheEntry(uniq_id, dx, dy, x_min, y_max, window_size)
