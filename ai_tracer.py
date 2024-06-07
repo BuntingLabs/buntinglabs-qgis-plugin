@@ -260,6 +260,18 @@ class AIVectorizerTool(QgsMapToolCapture):
 
                 graph_nodes.extend([(ix, iy), (jx, jy)])
 
+            graph_neighbors = {}
+            for path, cost in pts_costs.items():
+                ix, iy, jx, jy = map(int, path.split('_'))
+                assert (ix, iy) != (jx, jy)
+
+                if (ix, iy) not in graph_neighbors:
+                    graph_neighbors[(ix, iy)] = []
+                if (jx, jy) not in graph_neighbors:
+                    graph_neighbors[(jx, jy)] = []
+                graph_neighbors[(ix, iy)].append(((jx, jy), cost))
+                graph_neighbors[(jx, jy)].append(((ix, iy), cost))
+
             def idx_for_closest(pt: QgsPointXY):
                 img_x, img_y = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
 
@@ -267,7 +279,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                 return dists.index(min(dists))
             # print('graph_nodes', graph_nodes)
 
-            def dijkstra(graph_nodes, pts_costs, start_idx, end_idx):
+            def dijkstra(graph_nodes, graph_neighbors, start_idx, end_idx):
                 start, end = graph_nodes[start_idx], graph_nodes[end_idx]
                 queue = [(0, start)]
                 distances = {start: 0}
@@ -279,18 +291,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                     if current_node == end:
                         break
 
-                    ix, iy = current_node
-                    for neighbor in graph_nodes:
-                        if neighbor == current_node:
-                            continue
-                        jx, jy = neighbor
-                        edge_key1 = f"{ix}_{iy}_{jx}_{jy}"
-                        edge_key2 = f"{jx}_{jy}_{ix}_{iy}"
-                        edge_weight = min(pts_costs.get(edge_key1, float('inf')), pts_costs.get(edge_key2, float('inf')))
-
-                        if edge_weight == float('inf'):
-                            continue
-
+                    for neighbor, edge_weight in graph_neighbors.get(current_node, []):
                         new_distance = current_distance + edge_weight
                         if new_distance < distances.get(neighbor, float('inf')):
                             distances[neighbor] = new_distance
@@ -305,7 +306,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
                 return path, distances.get(end, float('inf'))
 
-            path, cost = dijkstra(graph_nodes, pts_costs, idx_for_closest(self.vertices[-1]), idx_for_closest(pt))
+            path, cost = dijkstra(graph_nodes, graph_neighbors, idx_for_closest(self.vertices[-1]), idx_for_closest(pt))
 
             # [(251, 262), (251, 255), (288, 84), (220, 49)]
             # Replace bits of the path as possible
