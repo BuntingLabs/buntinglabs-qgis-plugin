@@ -3,6 +3,7 @@ import time
 from enum import Enum
 from collections import namedtuple
 import cProfile, pstats, io
+import heapq
 
 from qgis.PyQt.QtCore import Qt, QSettings, QUrl
 from qgis.PyQt.QtWidgets import QPushButton
@@ -235,6 +236,9 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # Relative to map_cache
         if self.map_cache is not None and self.map_cache.uniq_id in self.graphs:
+            pr = cProfile.Profile()
+            pr.enable()
+
             (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
             hover_px, hover_py = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
 
@@ -261,9 +265,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
                 dists = [(img_x - x) ** 2 + (img_y - y) ** 2 for x, y in graph_nodes]
                 return dists.index(min(dists))
-
-            import heapq
-            print('graph_nodes', graph_nodes)
+            # print('graph_nodes', graph_nodes)
 
             def dijkstra(graph_nodes, pts_costs, start_idx, end_idx):
                 start, end = graph_nodes[start_idx], graph_nodes[end_idx]
@@ -303,18 +305,8 @@ class AIVectorizerTool(QgsMapToolCapture):
 
                 return path, distances.get(end, float('inf'))
 
-            import cProfile, pstats, io
-            pr = cProfile.Profile()
-            pr.enable()
             path, cost = dijkstra(graph_nodes, pts_costs, idx_for_closest(self.vertices[-1]), idx_for_closest(pt))
-            pr.disable()
-            s = io.StringIO()
-            ps = pstats.Stats(pr, stream=s).sort_stats(pstats.SortKey.CUMULATIVE)
-            ps.print_stats()
-            print(s.getvalue())
 
-            print("Path:", path)
-            print("Cost:", cost)
             # [(251, 262), (251, 255), (288, 84), (220, 49)]
             # Replace bits of the path as possible
             minimized_path = [path[0]]
@@ -336,11 +328,17 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             # closest_map_x, closest_map_y = closest_node[0] * dx + x_min, y_max - closest_node[1] * dy
             # print('closest_map_x', closest_map_x, 'closest_map_y', closest_map_y)
+            pr.disable()
+            s = io.StringIO()
+            ps = pstats.Stats(pr, stream=s).sort_stats(pstats.SortKey.CUMULATIVE)
+            ps.print_stats()
+            print(s.getvalue())
 
             self.rb.setToGeometry(
                 QgsGeometry.fromPolylineXY(path_map_pts),
                 None
             )
+            
             return
             # First, see if we have a cached route at this point.
             # nearest_id = self.spatial_indices[self.map_cache.uniq_id][0].nearestNeighbor(QgsPointXY(hover_px, hover_py), 1)[0]
