@@ -18,6 +18,7 @@ import numpy as np
 
 from .tracing_task import AutocompleteTask, HoverTask
 from .trajectory import Trajectory, TrajectoryClick
+from .trajectory_tree import TrajectoryTree
 
 def get_complement(color):
     r, g, b, a = color.red(), color.green(), color.blue(), color.alpha()
@@ -157,6 +158,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.traj_tries = dict()
         self.spatial_indices = dict()
         self.graphs = dict()
+        self.trees = dict()
 
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
@@ -236,8 +238,8 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # Relative to map_cache
         if self.map_cache is not None and self.map_cache.uniq_id in self.graphs:
-            pr = cProfile.Profile()
-            pr.enable()
+            # pr = cProfile.Profile()
+            # pr.enable()
 
             (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
             hover_px, hover_py = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
@@ -254,59 +256,63 @@ class AIVectorizerTool(QgsMapToolCapture):
             # print('nearest', nearest_node_pt.x(), nearest_node_pt.y(), 'pt', pt.x(), pt.y())
 
             # create list of nodes
-            graph_nodes = []
-            for path in pts_paths.keys():
-                ix, iy, jx, jy = map(int, path.split('_'))
+            # graph_nodes = []
+            # for path in pts_paths.keys():
+            #     ix, iy, jx, jy = map(int, path.split('_'))
 
-                graph_nodes.extend([(ix, iy), (jx, jy)])
+            #     graph_nodes.extend([(ix, iy), (jx, jy)])
 
-            graph_neighbors = {}
-            for path, cost in pts_costs.items():
-                ix, iy, jx, jy = map(int, path.split('_'))
-                assert (ix, iy) != (jx, jy)
+            # graph_neighbors = {}
+            # for path, cost in pts_costs.items():
+            #     ix, iy, jx, jy = map(int, path.split('_'))
+            #     assert (ix, iy) != (jx, jy)
 
-                if (ix, iy) not in graph_neighbors:
-                    graph_neighbors[(ix, iy)] = []
-                if (jx, jy) not in graph_neighbors:
-                    graph_neighbors[(jx, jy)] = []
-                graph_neighbors[(ix, iy)].append(((jx, jy), cost))
-                graph_neighbors[(jx, jy)].append(((ix, iy), cost))
+            #     if (ix, iy) not in graph_neighbors:
+            #         graph_neighbors[(ix, iy)] = []
+            #     if (jx, jy) not in graph_neighbors:
+            #         graph_neighbors[(jx, jy)] = []
+            #     graph_neighbors[(ix, iy)].append(((jx, jy), cost))
+            #     graph_neighbors[(jx, jy)].append(((ix, iy), cost))
 
-            def idx_for_closest(pt: QgsPointXY):
-                img_x, img_y = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
+            # def idx_for_closest(pt: QgsPointXY):
+            #     img_x, img_y = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
 
-                dists = [(img_x - x) ** 2 + (img_y - y) ** 2 for x, y in graph_nodes]
-                return dists.index(min(dists))
+            #     dists = [(img_x - x) ** 2 + (img_y - y) ** 2 for x, y in graph_nodes]
+            #     return dists.index(min(dists))
             # print('graph_nodes', graph_nodes)
 
-            def dijkstra(graph_nodes, graph_neighbors, start_idx, end_idx):
-                start, end = graph_nodes[start_idx], graph_nodes[end_idx]
-                queue = [(0, start)]
-                distances = {start: 0}
-                previous_nodes = {start: None}
+            # def dijkstra(graph_nodes, graph_neighbors, start_idx, end_idx):
+            #     start, end = graph_nodes[start_idx], graph_nodes[end_idx]
+            #     queue = [(0, start)]
+            #     distances = {start: 0}
+            #     previous_nodes = {start: None}
 
-                while queue:
-                    current_distance, current_node = heapq.heappop(queue)
+            #     while queue:
+            #         current_distance, current_node = heapq.heappop(queue)
 
-                    if current_node == end:
-                        break
+            #         if current_node == end:
+            #             break
 
-                    for neighbor, edge_weight in graph_neighbors.get(current_node, []):
-                        new_distance = current_distance + edge_weight
-                        if new_distance < distances.get(neighbor, float('inf')):
-                            distances[neighbor] = new_distance
-                            previous_nodes[neighbor] = current_node
-                            heapq.heappush(queue, (new_distance, neighbor))
+            #         for neighbor, edge_weight in graph_neighbors.get(current_node, []):
+            #             new_distance = current_distance + edge_weight
+            #             if new_distance < distances.get(neighbor, float('inf')):
+            #                 distances[neighbor] = new_distance
+            #                 previous_nodes[neighbor] = current_node
+            #                 heapq.heappush(queue, (new_distance, neighbor))
 
-                path, current = [], end
-                while current is not None:
-                    path.append(current)
-                    current = previous_nodes[current]
-                path = path[::-1]
+            #     path, current = [], end
+            #     while current is not None:
+            #         path.append(current)
+            #         current = previous_nodes[current]
+            #     path = path[::-1]
 
-                return path, distances.get(end, float('inf'))
+            #     return path, distances.get(end, float('inf'))
 
-            path, cost = dijkstra(graph_nodes, graph_neighbors, idx_for_closest(self.vertices[-1]), idx_for_closest(pt))
+            cur_tree = self.trees[self.map_cache.uniq_id]
+            path, cost = cur_tree.dijkstra(
+                cur_tree.idx_for_closest(self.vertices[-1]),
+                cur_tree.idx_for_closest(pt)
+            )
 
             # [(251, 262), (251, 255), (288, 84), (220, 49)]
             # Replace bits of the path as possible
@@ -329,11 +335,11 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             # closest_map_x, closest_map_y = closest_node[0] * dx + x_min, y_max - closest_node[1] * dy
             # print('closest_map_x', closest_map_x, 'closest_map_y', closest_map_y)
-            pr.disable()
-            s = io.StringIO()
-            ps = pstats.Stats(pr, stream=s).sort_stats(pstats.SortKey.CUMULATIVE)
-            ps.print_stats()
-            print(s.getvalue())
+            # pr.disable()
+            # s = io.StringIO()
+            # ps = pstats.Stats(pr, stream=s).sort_stats(pstats.SortKey.CUMULATIVE)
+            # ps.print_stats()
+            # print(s.getvalue())
 
             self.rb.setToGeometry(
                 QgsGeometry.fromPolylineXY(path_map_pts),
@@ -700,6 +706,8 @@ class AIVectorizerTool(QgsMapToolCapture):
         #     pr.addFeature(feature)
         # layer.updateExtents()
         # QgsProject.instance().addMapLayer(layer)
+
+        self.trees[self.map_cache.uniq_id] = TrajectoryTree(pts_cost, pts_paths, (dx, dy, x_min, y_max))
 
         # print('pts_cost', pts_cost)
         # print('pts_paths', pts_paths)
