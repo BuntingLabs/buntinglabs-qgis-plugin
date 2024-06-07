@@ -1,5 +1,6 @@
 # Copyright 2024 Bunting Labs, Inc.
 import heapq
+from collections import defaultdict
 from functools import lru_cache
 
 from qgis.core import QgsPointXY
@@ -14,26 +15,23 @@ class TrajectoryTree:
 
             self.graph_nodes.extend([(ix, iy), (jx, jy)])
 
-        self.graph_neighbors = {}
+        self.graph_neighbors = defaultdict(list)
         for path, cost in pts_costs.items():
             ix, iy, jx, jy = map(int, path.split('_'))
             assert (ix, iy) != (jx, jy)
 
-            if (ix, iy) not in self.graph_neighbors:
-                self.graph_neighbors[(ix, iy)] = []
-            if (jx, jy) not in self.graph_neighbors:
-                self.graph_neighbors[(jx, jy)] = []
             self.graph_neighbors[(ix, iy)].append(((jx, jy), cost))
             self.graph_neighbors[(jx, jy)].append(((ix, iy), cost))
 
     def idx_for_closest(self, pt: QgsPointXY):
-        img_x, img_y = (pt.x() - self.params[0]) / self.params[1], -(pt.y() - self.params[2]) / self.params[3]
+        # (dx, dy, x_min, y_max)
+        img_x, img_y = (pt.x() - self.params[2]) / self.params[0], -(pt.y() - self.params[3]) / self.params[1]
 
         dists = [(img_x - x) ** 2 + (img_y - y) ** 2 for x, y in self.graph_nodes]
         return dists.index(min(dists))
 
     @lru_cache(maxsize=100)
-    def dijkstra(self, start_idx, end_idx):
+    def dijkstra(self, start_idx: int, end_idx: int):
         start, end = self.graph_nodes[start_idx], self.graph_nodes[end_idx]
         queue = [(0, start)]
         distances = {start: 0}
@@ -45,7 +43,7 @@ class TrajectoryTree:
             if current_node == end:
                 break
 
-            for neighbor, edge_weight in self.graph_neighbors.get(current_node, []):
+            for neighbor, edge_weight in self.graph_neighbors[current_node]:
                 new_distance = current_distance + edge_weight
                 if new_distance < distances.get(neighbor, float('inf')):
                     distances[neighbor] = new_distance

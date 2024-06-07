@@ -313,6 +313,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                 cur_tree.idx_for_closest(self.vertices[-1]),
                 cur_tree.idx_for_closest(pt)
             )
+            # print('ran dijkstras', len(path), cost, path, 'start=', self.vertices[-1], 'end', pt)
 
             # [(251, 262), (251, 255), (288, 84), (220, 49)]
             # Replace bits of the path as possible
