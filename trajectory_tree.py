@@ -50,6 +50,10 @@ class TrajectoryTree:
                     previous_nodes[neighbor] = current_node
                     heapq.heappush(queue, (new_distance, neighbor))
 
+        # If the end node wasn't reachable from the start
+        if end not in previous_nodes:
+            return [], float('inf')
+
         path, current = [], end
         while current is not None:
             path.append(current)
