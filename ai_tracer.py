@@ -303,11 +303,33 @@ class AIVectorizerTool(QgsMapToolCapture):
 
                 return path, distances.get(end, float('inf'))
 
+            import cProfile, pstats, io
+            pr = cProfile.Profile()
+            pr.enable()
             path, cost = dijkstra(graph_nodes, pts_costs, idx_for_closest(self.vertices[-1]), idx_for_closest(pt))
+            pr.disable()
+            s = io.StringIO()
+            ps = pstats.Stats(pr, stream=s).sort_stats(pstats.SortKey.CUMULATIVE)
+            ps.print_stats()
+            print(s.getvalue())
+
             print("Path:", path)
             print("Cost:", cost)
             # [(251, 262), (251, 255), (288, 84), (220, 49)]
-            path_map_pts = [ QgsPointXY(node[0] * dx + x_min, y_max - node[1] * dy) for node in path ]
+            # Replace bits of the path as possible
+            minimized_path = [path[0]]
+            for i in range(len(path)-1):
+                prev, next = path[i], path[i+1]
+                (ix, iy), (jx, jy) = (prev, next)
+
+                if f"{ix}_{iy}_{jx}_{jy}" in pts_paths:
+                    minimized_path.extend(pts_paths[f"{ix}_{iy}_{jx}_{jy}"][1:])
+                elif f"{jx}_{jy}_{ix}_{iy}" in pts_paths:
+                    minimized_path.extend(reversed(pts_paths[f"{jx}_{jy}_{ix}_{iy}"][:-1]))
+                else:
+                    minimized_path.append(next)
+
+            path_map_pts = [ QgsPointXY(node[1] * dx + x_min, y_max - node[0] * dy) for node in minimized_path ]
 
             # closest_node = min(graph_nodes, key=lambda node: (node[0] - hover_px) ** 2 + (node[1] - hover_py) ** 2)
             # # print('closest_node', closest_node)
