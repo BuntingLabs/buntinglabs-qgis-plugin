@@ -3,6 +3,7 @@ import time
 from enum import Enum
 from collections import namedtuple
 import cProfile, pstats, io
+from typing import List
 import heapq
 
 from qgis.PyQt.QtCore import Qt, QSettings, QUrl
@@ -220,6 +221,34 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         return points
 
+    def solvePathToPoint(self, pt: QgsPointXY) -> List[QgsPointXY]:
+        (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
+        (_, pts_paths) = self.graphs['penis']
+
+        cur_tree = self.trees[self.map_cache.uniq_id]
+        path, cost = cur_tree.dijkstra(
+            cur_tree.idx_for_closest(self.vertices[-1]),
+            cur_tree.idx_for_closest(pt)
+        )
+        if len(path) == 0:
+            return None
+
+        # Replace bits of the path as possible
+        minimized_path = [path[0]]
+        for i in range(len(path)-1):
+            prev, next = path[i], path[i+1]
+            (ix, iy), (jx, jy) = (prev, next)
+
+            if f"{ix}_{iy}_{jx}_{jy}" in pts_paths:
+                minimized_path.extend(pts_paths[f"{ix}_{iy}_{jx}_{jy}"][1:])
+            elif f"{jx}_{jy}_{ix}_{iy}" in pts_paths:
+                minimized_path.extend(reversed(pts_paths[f"{jx}_{jy}_{ix}_{iy}"][:-1]))
+            else:
+                minimized_path.append(next)
+
+        path_map_pts = [ QgsPointXY(node[1] * dx + x_min, y_max - node[0] * dy) for node in minimized_path ]
+        return path_map_pts
+
     def canvasMoveEvent(self, e):
         if self.isAutoSnapEnabled():
             snapMatch = self.snapper.snapToMap(e.pos())
@@ -236,43 +265,13 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # Relative to map_cache
         if self.map_cache is not None and self.map_cache.uniq_id in self.graphs:
-            (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
-            hover_px, hover_py = (pt.x() - x_min) / dx, -(pt.y() - y_max) / dy
+            path_map_pts = self.solvePathToPoint(pt)
 
-            (pts_costs, pts_paths, _) = self.graphs['penis']
-
-            cur_tree = self.trees[self.map_cache.uniq_id]
-            path, cost = cur_tree.dijkstra(
-                cur_tree.idx_for_closest(self.vertices[-1]),
-                cur_tree.idx_for_closest(pt)
-            )
-            if len(path) == 0:
-                self.rb.setToGeometry(
-                    QgsGeometry.fromPolylineXY([]),
-                    None
-                )
-                return
-
-            # Replace bits of the path as possible
-            minimized_path = [path[0]]
-            for i in range(len(path)-1):
-                prev, next = path[i], path[i+1]
-                (ix, iy), (jx, jy) = (prev, next)
-
-                if f"{ix}_{iy}_{jx}_{jy}" in pts_paths:
-                    minimized_path.extend(pts_paths[f"{ix}_{iy}_{jx}_{jy}"][1:])
-                elif f"{jx}_{jy}_{ix}_{iy}" in pts_paths:
-                    minimized_path.extend(reversed(pts_paths[f"{jx}_{jy}_{ix}_{iy}"][:-1]))
-                else:
-                    minimized_path.append(next)
-
-            path_map_pts = [ QgsPointXY(node[1] * dx + x_min, y_max - node[0] * dy) for node in minimized_path ]
-
+            # None = failed to navigate
             self.rb.setToGeometry(
-                QgsGeometry.fromPolylineXY(path_map_pts),
+                QgsGeometry.fromPolylineXY(path_map_pts if path_map_pts is not None else []),
                 None
             )
-            
             return
         else:
             pass
