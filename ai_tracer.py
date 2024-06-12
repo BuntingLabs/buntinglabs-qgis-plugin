@@ -225,8 +225,8 @@ class AIVectorizerTool(QgsMapToolCapture):
         return points
 
     def solvePathToPoint(self, pt: QgsPointXY) -> List[QgsPointXY]:
-        if self.map_cache is None:
-            return []
+        if self.map_cache is None or len(self.vertices) == 0:
+            return [pt]
 
         (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
         (_, pts_paths) = self.graphs['penis']
@@ -520,11 +520,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             else:
                 point = self.toMapCoordinates(e.pos())
 
-            if self.map_cache is not None:
-                # TODO: when to solve path, vs just show pointer?
-                queued_points = self.solvePathToPoint(point)
-            else:
-                queued_points = [point]
+            queued_points = self.solvePathToPoint(point)
 
             for completed_pt in queued_points:
                 self.addVertex(completed_pt)
