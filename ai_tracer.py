@@ -225,6 +225,9 @@ class AIVectorizerTool(QgsMapToolCapture):
         return points
 
     def solvePathToPoint(self, pt: QgsPointXY) -> List[QgsPointXY]:
+        if self.map_cache is None:
+            return []
+
         (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
         (_, pts_paths) = self.graphs['penis']
 
@@ -517,19 +520,22 @@ class AIVectorizerTool(QgsMapToolCapture):
             else:
                 point = self.toMapCoordinates(e.pos())
 
-            wasDoubleClick = len(self.vertices) >= 1 and point.distance(self.vertices[-1]) == 0
+            if self.map_cache is not None:
+                # TODO: when to solve path, vs just show pointer?
+                queued_points = self.solvePathToPoint(point)
+            else:
+                queued_points = [point]
 
-            # self.predicted_points = []
-
-            self.addVertex(point)
-            self.vertices.append(point)
+            for completed_pt in queued_points:
+                self.addVertex(completed_pt)
+                self.vertices.append(completed_pt)
 
             # This just sets the capturing property to true so we can
             # repeatedly call it
             self.startCapturing()
 
             # Analyze the map if we have >=2 vertices
-            if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier) and not wasDoubleClick:
+            if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier):
                 root = QgsProject.instance().layerTreeRoot()
                 rlayers = find_raster_layers(root)
                 project_crs = QgsProject.instance().crs()
