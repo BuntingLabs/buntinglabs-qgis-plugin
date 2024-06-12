@@ -16,6 +16,9 @@ from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsPoint, QgsWkbTypes, QgsLayerTreeLayer, QgsSpatialIndex
 from PyQt5.QtCore import pyqtSignal
 import numpy as np
+from qgis.core import QgsField
+from PyQt5.QtCore import QVariant
+
 
 from .tracing_task import AutocompleteTask, HoverTask
 from .trajectory import Trajectory, TrajectoryClick
@@ -234,7 +237,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             return None
 
         # Replace bits of the path as possible
-        minimized_path = [path[0]]
+        minimized_path = [[path[0][1], path[0][0]]] # Coordinate order gets flipped for some reason
         for i in range(len(path)-1):
             prev, next = path[i], path[i+1]
             (ix, iy), (jx, jy) = (prev, next)
@@ -555,8 +558,10 @@ class AIVectorizerTool(QgsMapToolCapture):
         node_layer = QgsVectorLayer("Point?crs=EPSG:3857", "Graph Nodes", "memory")
         node_pr = node_layer.dataProvider()
         
-        # Create a vector layer for graph paths
+        # Create a vector layer for graph paths with a cost attribute
         path_layer = QgsVectorLayer("LineString?crs=EPSG:3857", "Graph Paths", "memory")
+        path_layer.dataProvider().addAttributes([QgsField("cost", QVariant.Double)])
+        path_layer.updateFields()
         path_pr = path_layer.dataProvider()
         
         for nodes, path_in_between in pts_paths.items():
@@ -569,17 +574,18 @@ class AIVectorizerTool(QgsMapToolCapture):
                 feature.setGeometry(QgsGeometry.fromPointXY(point))
                 node_pr.addFeature(feature)
             
-            # Add path to the path layer
+            # Add path to the path layer with cost attribute
             line_points = [(ix * dx + x_min, y_max - iy * dy)] + \
                           [(x * dx + x_min, y_max - y * dy) for y, x in path_in_between] + \
                           [(jx * dx + x_min, y_max - jy * dy)]
             line_string = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in line_points])
             feature = QgsFeature()
             feature.setGeometry(line_string)
+            feature.setAttributes([pts_cost[nodes]])
             path_pr.addFeature(feature)
         node_layer.updateExtents()
         path_layer.updateExtents()
-        QgsProject.instance().addMapLayers([node_layer, path_layer], False)
+        QgsProject.instance().addMapLayers([node_layer, path_layer], True)
 
         self.trees[self.map_cache.uniq_id] = TrajectoryTree(pts_cost, pts_paths, (dx, dy, x_min, y_max))
 
