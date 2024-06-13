@@ -581,9 +581,10 @@ class AIVectorizerTool(QgsMapToolCapture):
                           [(x * dx + x_min, y_max - y * dy) for y, x in path_in_between] + \
                           [(jx * dx + x_min, y_max - jy * dy)]
             line_string = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in line_points])
+            length = line_string.length()
             feature = QgsFeature()
             feature.setGeometry(line_string)
-            feature.setAttributes([pts_cost[nodes]])
+            feature.setAttributes([pts_cost[nodes] / length])
             path_pr.addFeature(feature)
         node_layer.updateExtents()
         path_layer.updateExtents()
