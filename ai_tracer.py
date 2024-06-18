@@ -256,9 +256,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                 minimized_path.append(next)
 
         # convert to coordinates
-        print('minimized_path', minimized_path)
         minimized_path = [np.unravel_index(node, (600, 600)) for node in minimized_path]
-        print('minimized_path', minimized_path)
         minimized_path = [[int(node[0]), int(node[1])] for node in minimized_path]
 
         path_map_pts = [ QgsPointXY(node[1] * dx + x_min, y_max - node[0] * dy) for node in minimized_path ]
