@@ -238,19 +238,28 @@ class AIVectorizerTool(QgsMapToolCapture):
         )
         if len(path) == 0:
             return None
+        # Convert path to coordinates
+        # path = []
 
         # Replace bits of the path as possible
-        minimized_path = [[path[0][1], path[0][0]]] # Coordinate order gets flipped for some reason
+        minimized_path = [path[0]]
+        # minimized_path = [[path[0][1], path[0][0]]] # Coordinate order gets flipped for some reason
         for i in range(len(path)-1):
             prev, next = path[i], path[i+1]
-            (ix, iy), (jx, jy) = (prev, next)
+            # (ix, iy), (jx, jy) = np.unravel_index(prev, (1200, 1200)), np.unravel_index(next, (1200, 1200))
 
-            if f"{ix}_{iy}_{jx}_{jy}" in pts_paths:
-                minimized_path.extend(pts_paths[f"{ix}_{iy}_{jx}_{jy}"][1:])
-            elif f"{jx}_{jy}_{ix}_{iy}" in pts_paths:
-                minimized_path.extend(reversed(pts_paths[f"{jx}_{jy}_{ix}_{iy}"][:-1]))
+            if f"{prev}_{next}" in pts_paths:
+                minimized_path.extend(pts_paths[f"{prev}_{next}"][1:])
+            elif f"{next}_{prev}" in pts_paths:
+                minimized_path.extend(reversed(pts_paths[f"{next}_{prev}"][:-1]))
             else:
                 minimized_path.append(next)
+
+        # convert to coordinates
+        print('minimized_path', minimized_path)
+        minimized_path = [np.unravel_index(node, (600, 600)) for node in minimized_path]
+        print('minimized_path', minimized_path)
+        minimized_path = [[int(node[0]), int(node[1])] for node in minimized_path]
 
         path_map_pts = [ QgsPointXY(node[1] * dx + x_min, y_max - node[0] * dy) for node in minimized_path ]
         return path_map_pts

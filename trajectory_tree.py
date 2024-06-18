@@ -3,6 +3,7 @@ import heapq
 from collections import defaultdict
 from functools import lru_cache
 
+import numpy as np
 from qgis.core import QgsPointXY
 
 class TrajectoryTree:
@@ -11,24 +12,24 @@ class TrajectoryTree:
 
         self.graph_nodes = []
         for path in pts_paths.keys():
-            ix, iy, jx, jy = map(int, path.split('_'))
-
-            self.graph_nodes.extend([(ix, iy), (jx, jy)])
+            orig, dest = map(int, path.split('_'))
+            self.graph_nodes.extend([orig, dest])
 
         self.graph_neighbors = defaultdict(list)
         for path, cost in pts_costs.items():
-            ix, iy, jx, jy = map(int, path.split('_'))
-            if (ix, iy) == (jx, jy):
+            orig, dest = map(int, path.split('_'))
+            if orig == dest:
                 continue
 
-            self.graph_neighbors[(ix, iy)].append(((jx, jy), cost))
-            self.graph_neighbors[(jx, jy)].append(((ix, iy), cost))
+            self.graph_neighbors[orig].append((dest, cost))
+            self.graph_neighbors[dest].append((orig, cost))
 
     def idx_for_closest(self, pt: QgsPointXY):
         # (dx, dy, x_min, y_max)
         img_x, img_y = (pt.x() - self.params[2]) / self.params[0], -(pt.y() - self.params[3]) / self.params[1]
 
-        dists = [(img_x - x) ** 2 + (img_y - y) ** 2 for x, y in self.graph_nodes]
+        graph_nodes_coords = [np.unravel_index(node, (600, 600)) for node in self.graph_nodes]
+        dists = [(img_x - x) ** 2 + (img_y - y) ** 2 for y, x in graph_nodes_coords]
         return dists.index(min(dists))
 
     @lru_cache(maxsize=100)
