@@ -18,7 +18,8 @@ class TrajectoryTree:
         self.graph_neighbors = defaultdict(list)
         for path, cost in pts_costs.items():
             ix, iy, jx, jy = map(int, path.split('_'))
-            assert (ix, iy) != (jx, jy)
+            if (ix, iy) == (jx, jy):
+                continue
 
             self.graph_neighbors[(ix, iy)].append(((jx, jy), cost))
             self.graph_neighbors[(jx, jy)].append(((ix, iy), cost))

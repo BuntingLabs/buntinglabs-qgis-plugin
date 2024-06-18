@@ -283,97 +283,20 @@ class AIVectorizerTool(QgsMapToolCapture):
             pass
 
         hover_cache_entry = []
-        # Check if the shift key is being pressed
-        # We have special existing-line-editing mode when shift is hit
-        if len(self.vertices) >= 2 and self.map_cache is not None and not (e.modifiers() & Qt.ShiftModifier):
 
-            # print('creating HoverTask')
-            # -(y2 - self.y_max) / self.dy, (x2 - self.x_min) / self.dx
-            pxys = [self.vertices[-1], (pt.x(), pt.y())]
-            (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
-            pxys = [((px - x_min) / dx, -(py - y_max) / dy) for (px, py) in pxys]
+        # Either they're holding down shift, or we don't have the map cache for this line.
+        # self.predicted_points = []
+        last_point = self.vertices[-1]
 
-            # Check cache
-            hover_px, hover_py = pxys[-1][0], pxys[-1][1]
-            hover_cache_entry = self.autocomplete_cache.get(self.map_cache.uniq_id, hover_px, hover_py)
-            if hover_cache_entry is not None:
-                pass
-                # print('cache HIT', hover_cache_entry)
-                # self.predicted_points = [QgsPointXY(*pt) for pt in hover_cache_entry]
-                # self.predictedPointsReceived.emit((None,))
-            else:
-                # TODO behavior when we can't immediately load something?
-                hover_cache_entry = []
+        # self.scissors_icon.hide()
 
-                # print('cache MISS', self.hover_task_is_active, 'hover', hover_px, hover_py)
-                if not self.hover_task_is_active:
-                    ht = HoverTask(self, self.map_cache, pxys)
+        # Close it!
+        points = [ self.vertices[0], last_point, QgsPointXY(pt.x(), pt.y()), self.vertices[0]]
 
-                    ht.messageReceived.connect(lambda e: print('error', e))#self.notifyUserOfMessage(*e))
-                    def handleTrajectoriesReceived(self, trajectories):
-                        other = Trajectory.from_dict(trajectories)
+        poly_geo = QgsGeometry.fromPolygonXY([points])
 
-                        start_time = time.time()
-                        self.traj_tries[self.map_cache.uniq_id].merge(other)
-                        print(f"Merge took {time.time() - start_time:.4f} seconds")
-
-                        start_time = time.time()
-                        self.spatial_indices[self.map_cache.uniq_id] = self.traj_tries[self.map_cache.uniq_id].to_spatial_index()
-                        print(f"Spatial index creation took {time.time() - start_time:.4f} seconds")
-
-                        # QgsProject.instance().addMapLayer(self.spatial_indices[self.map_cache.uniq_id][-1])
-                        # for trajectory in trajectories:
-                        #     transformed_points = [((jx * dx) + x_min, y_max - (ix * dy)) for (ix, jx) in trajectory['trajectory']]
-
-                        #     trajectory_py, trajectory_px = trajectory['simulation_endpoint']
-                        #     print('hover', hover_px, hover_py, 'trajectory', trajectory_px, trajectory_py)
-                            # self.autocomplete_cache.set(self.map_cache.uniq_id, trajectory_px, trajectory_py, transformed_points)
-
-                        # self.predicted_points = [QgsPointXY(*pt) for pt in transformed_points]
-                        # self.predictedPointsReceived.emit((None,))
-
-                    # Replace the lambda with the method call
-                    ht.trajectoriesReceived.connect(lambda pts: handleTrajectoriesReceived(self, pts))
-                    ht.taskCompleted.connect(lambda: self.dropHoverTask())
-                    ht.taskTerminated.connect(lambda: self.dropHoverTask())
-
-                    QgsApplication.taskManager().addTask(
-                        ht,
-                    )
-                    self.hover_task_is_active = True
-
-            last_point = self.vertices[-1]
-            # if self.isCutting(last_point):
-            #     # Shift means our last vertex should effectively be the closest point to the line
-            #     self.scissors_icon.setCenter(last_point)
-            #     self.scissors_icon.show()
-
-            #     # Hide the rubber band
-            #     self.rb.reset()
-
-            #     return
-            # else:
-            #     # We've already cut, so now we're drawing lines without autocomplete.
-            #     last_point = self.vertices[-1]
-            #     self.scissors_icon.hide()
-
-            #     # Use complement color
-            #     self.rb.setFillColor(get_complement(self.digitizingFillColor()))
-            #     self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
-        else:
-            # Either they're holding down shift, or we don't have the map cache for this line.
-            # self.predicted_points = []
-            last_point = self.vertices[-1]
-
-            # self.scissors_icon.hide()
-
-            # Close it!
-            points = [ self.vertices[0], last_point, QgsPointXY(pt.x(), pt.y()), self.vertices[0]]
-
-            poly_geo = QgsGeometry.fromPolygonXY([points])
-
-            self.rb.setFillColor(get_complement(self.digitizingFillColor()))
-            self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
+        self.rb.setFillColor(get_complement(self.digitizingFillColor()))
+        self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
 
         # geometry depends on capture mode
         if self.mode() == QgsMapToolCapture.CaptureLine and not (e.modifiers() & Qt.ShiftModifier):
@@ -557,38 +480,38 @@ class AIVectorizerTool(QgsMapToolCapture):
         dx, dy, x_min, y_max = self.map_cache.dx, self.map_cache.dy, self.map_cache.x_min, self.map_cache.y_max
 
         # Create a vector layer for graph nodes
-        node_layer = QgsVectorLayer("Point?crs=EPSG:3857", "Graph Nodes", "memory")
-        node_pr = node_layer.dataProvider()
+        # node_layer = QgsVectorLayer("Point?crs=EPSG:3857", "Graph Nodes", "memory")
+        # node_pr = node_layer.dataProvider()
         
-        # Create a vector layer for graph paths with a cost attribute
-        path_layer = QgsVectorLayer("LineString?crs=EPSG:3857", "Graph Paths", "memory")
-        path_layer.dataProvider().addAttributes([QgsField("cost", QVariant.Double)])
-        path_layer.updateFields()
-        path_pr = path_layer.dataProvider()
+        # # Create a vector layer for graph paths with a cost attribute
+        # path_layer = QgsVectorLayer("LineString?crs=EPSG:3857", "Graph Paths", "memory")
+        # path_layer.dataProvider().addAttributes([QgsField("cost", QVariant.Double)])
+        # path_layer.updateFields()
+        # path_pr = path_layer.dataProvider()
         
-        for nodes, path_in_between in pts_paths.items():
-            ix, iy, jx, jy = map(int, nodes.split('_'))
+        # for nodes, path_in_between in pts_paths.items():
+        #     ix, iy, jx, jy = map(int, nodes.split('_'))
 
-            # Add nodes to the node layer and sindex_points
-            for x, y in [(ix, iy), (jx, jy)]:
-                point = QgsPointXY(x * dx + x_min, y_max - y * dy)
-                feature = QgsFeature()
-                feature.setGeometry(QgsGeometry.fromPointXY(point))
-                node_pr.addFeature(feature)
+        #     # Add nodes to the node layer and sindex_points
+        #     for x, y in [(ix, iy), (jx, jy)]:
+        #         point = QgsPointXY(x * dx + x_min, y_max - y * dy)
+        #         feature = QgsFeature()
+        #         feature.setGeometry(QgsGeometry.fromPointXY(point))
+        #         node_pr.addFeature(feature)
             
-            # Add path to the path layer with cost attribute
-            line_points = [(ix * dx + x_min, y_max - iy * dy)] + \
-                          [(x * dx + x_min, y_max - y * dy) for y, x in path_in_between] + \
-                          [(jx * dx + x_min, y_max - jy * dy)]
-            line_string = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in line_points])
-            length = line_string.length()
-            feature = QgsFeature()
-            feature.setGeometry(line_string)
-            feature.setAttributes([pts_cost[nodes] / length])
-            path_pr.addFeature(feature)
-        node_layer.updateExtents()
-        path_layer.updateExtents()
-        QgsProject.instance().addMapLayers([node_layer, path_layer], True)
+        #     # Add path to the path layer with cost attribute
+        #     line_points = [(ix * dx + x_min, y_max - iy * dy)] + \
+        #                   [(x * dx + x_min, y_max - y * dy) for y, x in path_in_between] + \
+        #                   [(jx * dx + x_min, y_max - jy * dy)]
+        #     line_string = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in line_points])
+        #     length = line_string.length() + 1.0
+        #     feature = QgsFeature()
+        #     feature.setGeometry(line_string)
+        #     feature.setAttributes([pts_cost[nodes] / length])
+        #     path_pr.addFeature(feature)
+        # node_layer.updateExtents()
+        # path_layer.updateExtents()
+        # QgsProject.instance().addMapLayers([node_layer, path_layer], True)
 
         self.trees[self.map_cache.uniq_id] = TrajectoryTree(pts_cost, pts_paths, (dx, dy, x_min, y_max))
 
