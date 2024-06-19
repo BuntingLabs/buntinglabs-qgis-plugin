@@ -68,6 +68,39 @@ from collections import OrderedDict
 # (n_px, n_py) are "normalized" positions
 AutocompleteCacheEntry = namedtuple('AutocompleteCacheEntry', ['uniq_id', 'n_px', 'n_py'])
 
+class Chunk:
+    CONST_CHUNK_SIZE = 256
+
+    def __init__(self, x, y, dx, dy):
+        self.x = x
+        self.y = y
+        self.dx = dx
+        self.dy = dy
+
+    # gives a Chunk
+    @staticmethod
+    def pointToChunk(pt: QgsPointXY, map_cache: AutocompleteCacheEntry):
+        (x_min, dx, y_max, dy) = (map_cache.x_min, map_cache.dx, map_cache.y_max, map_cache.dy)
+        ix, iy = (pt.x() / dx, pt.y() / dy)
+
+        return Chunk(int(ix / Chunk.CONST_CHUNK_SIZE), int(iy / Chunk.CONST_CHUNK_SIZE), dx, dy)
+
+    def toPolygon(self) -> QgsGeometry:
+        x_min = self.dx * self.x * self.CONST_CHUNK_SIZE
+        x_max = self.dx * (self.x + 1) * self.CONST_CHUNK_SIZE
+        y_min = self.dy * self.y * self.CONST_CHUNK_SIZE
+        y_max = self.dy * (self.y + 1) * self.CONST_CHUNK_SIZE
+
+        points = [
+            QgsPointXY(x_min, y_min),
+            QgsPointXY(x_max, y_min),
+            QgsPointXY(x_max, y_max),
+            QgsPointXY(x_min, y_max),
+            QgsPointXY(x_min, y_min)
+        ]
+
+        return QgsGeometry.fromPolygonXY([points])
+
 class AutocompleteCache:
     def __init__(self, max_size, round_px=1.0):
         self.cache = OrderedDict()
@@ -116,6 +149,8 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         self.plugin = plugin
         self.rb = self.initRubberBand()
+
+        self.chunk_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
 
         # Options
         self.num_completions = 100
@@ -230,6 +265,10 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
         (_, pts_paths) = self.graphs['penis']
+
+        # Highlight chunk
+        cur_chunk = Chunk.pointToChunk(pt, self.map_cache)
+        self.chunk_rb.setToGeometry(cur_chunk.toPolygon(), None)
 
         cur_tree = self.trees[self.map_cache.uniq_id]
         path, cost = cur_tree.dijkstra(
@@ -573,6 +612,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def deactivate(self):
         self.rb.reset()
+        self.chunk_rb.reset()
 
         # self.scissors_icon.hide()
         self.plugin.action.setChecked(False)
