@@ -13,14 +13,14 @@ from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsVertexMarker, \
     QgsSnapIndicator
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
-    QgsPoint, QgsWkbTypes, QgsLayerTreeLayer, QgsSpatialIndex
+    QgsPoint, QgsWkbTypes, QgsLayerTreeLayer, QgsSpatialIndex, QgsRectangle
 from PyQt5.QtCore import pyqtSignal
 import numpy as np
 from qgis.core import QgsField
 from PyQt5.QtCore import QVariant
 
 
-from .tracing_task import AutocompleteTask, HoverTask
+from .tracing_task import AutocompleteTask, UploadChunkTask
 from .trajectory import Trajectory, TrajectoryClick
 from .trajectory_tree import TrajectoryTree
 
@@ -77,6 +77,9 @@ class Chunk:
         self.dx = dx
         self.dy = dy
 
+    def __str__(self):
+        return f"Chunk(x={self.x}, y={self.y}, dx={self.dx}, dy={self.dy})"
+
     # gives a Chunk
     @staticmethod
     def pointToChunk(pt: QgsPointXY, map_cache: AutocompleteCacheEntry):
@@ -100,6 +103,13 @@ class Chunk:
         ]
 
         return QgsGeometry.fromPolygonXY([points])
+
+    def toRectangle(self) -> QgsRectangle:
+        x_min = self.dx * self.x * self.CONST_CHUNK_SIZE
+        x_max = self.dx * (self.x + 1) * self.CONST_CHUNK_SIZE
+        y_min = self.dy * self.y * self.CONST_CHUNK_SIZE
+        y_max = self.dy * (self.y + 1) * self.CONST_CHUNK_SIZE
+        return QgsRectangle(x_min, y_min, x_max, y_max)
 
 class AutocompleteCache:
     def __init__(self, max_size, round_px=1.0):
@@ -151,6 +161,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.rb = self.initRubberBand()
 
         self.chunk_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
+        self.chunk_cache = dict()
 
         # Options
         self.num_completions = 100
@@ -269,6 +280,44 @@ class AIVectorizerTool(QgsMapToolCapture):
         # Highlight chunk
         cur_chunk = Chunk.pointToChunk(pt, self.map_cache)
         self.chunk_rb.setToGeometry(cur_chunk.toPolygon(), None)
+
+        # Upload if it hasn't already been
+        if str(cur_chunk) not in self.chunk_cache:
+            print(f'=> missing chunk {cur_chunk}')
+            root = QgsProject.instance().layerTreeRoot()
+            rlayers = find_raster_layers(root)
+            project_crs = QgsProject.instance().crs()
+
+            vlayer = self.plugin.iface.activeLayer()
+            if not isinstance(vlayer, QgsVectorLayer):
+                self.plugin.iface.messageBar().pushMessage(
+                    "Bunting Labs AI Vectorizer",
+                    "No active vector layer.",
+                    Qgis.Warning,
+                    duration=15)
+                return
+            elif vlayer.wkbType() not in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString,
+                                        QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
+                self.plugin.iface.messageBar().pushMessage(
+                    "Bunting Labs AI Vectorizer",
+                    "Unsupported vector layer type for AI autocomplete.",
+                    Qgis.Warning,
+                    duration=15)
+                return
+
+            chunk_task = UploadChunkTask(
+                self,
+                vlayer,
+                rlayers,
+                project_crs,
+                cur_chunk
+            )
+
+            self.chunk_cache[str(cur_chunk)] = True
+
+            chunk_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
+            chunk_task.taskCompleted.connect(lambda: print("done"))
+            QgsApplication.taskManager().addTask(chunk_task)
 
         cur_tree = self.trees[self.map_cache.uniq_id]
         path, cost = cur_tree.dijkstra(

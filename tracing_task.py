@@ -378,6 +378,168 @@ class HoverTask(QgsTask):
         super().cancel()
 
 
+class UploadChunkTask(QgsTask):
+    # This task can run in the background of QGIS
+
+    # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
+    messageReceived = pyqtSignal(tuple)
+
+    def __init__(self, tracing_tool, vlayer, rlayers, project_crs, chunk):
+        super().__init__(
+            'Bunting Labs AI Vectorizer is processing your map...',
+            QgsTask.CanCancel
+        )
+
+        self.tracing_tool = tracing_tool
+        self.vlayer = vlayer
+        self.rlayers = rlayers
+        self.project_crs = project_crs
+        self.chunk = chunk
+
+    def run(self):
+        self.setProgress(0.0)
+
+        # By default, we zoom out 2.5x from the user's perspective.
+        proj_crs_units_per_screen_pixel = 2.5 * (self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width())
+
+        # The resolution of a raster layer is defined as the ground distance covered by one pixel
+        # of the raster. Therefore, a smaller resolution value means a higher resolution raster.
+        mapEpsgCode = self.project_crs.postgisSrid()
+
+        # Assuming self.rlayers is a list of QgsRasterLayer objects
+        # If the user drags in a raster layer without a CRS, default behavior is to give it "unknown"
+        # aka invalid CRS, which (to my knowledge) does not reproject and is equivalent to being in the same CRS.
+        intersecting_layers = [ rlayer for rlayer in self.rlayers if layerDoesIntersect(rlayer, self.project_crs, self.tracing_tool.vertices[-1]) ]
+
+        # ( units in project CRS ) / ( 1 raster layer's pixel ), independent of raster CRS based on Euclidean approximation
+        rupps = [ rasterUnitsPerPixelEstimate(r, self.project_crs, self.tracing_tool.vertices[-2:]) for r in intersecting_layers ]
+
+        # Use the resolution of the topmost raster layer
+        topmost_res_at_pt = rupps[0] if len(intersecting_layers) >= 1 else proj_crs_units_per_screen_pixel
+
+        # Rendering resolution in units per pixel
+        dx = max(proj_crs_units_per_screen_pixel, topmost_res_at_pt)
+        dy = dx
+
+        if len(self.rlayers) == 0:
+            self.messageReceived.emit((
+                'No raster layers are loaded. Load a GeoTIFF to use autocomplete.',
+                Qgis.Critical, None, None
+            ))
+            return False
+
+        # First, if they clicked outside of all raster layers, warn them.
+        if len(intersecting_layers) == 0:
+            self.messageReceived.emit((
+                'No raster layers found beneath your autocomplete tool',
+                Qgis.Warning, None, None
+            ))
+
+        # create image
+        # Format_RGB888 is 24-bit (8 bits each) for each color channel, unlike
+        # Format_RGB32 which by default has 0xff on the alpha channel, and screws
+        # up reading it into GDAL!
+        img = QImage(QSize(self.chunk.CONST_CHUNK_SIZE, self.chunk.CONST_CHUNK_SIZE), QImage.Format_RGB888)
+
+        # white is most canonically background
+        color = QColor(255, 255, 255)
+        img.fill(color.rgb())
+
+        mapSettings = QgsMapSettings()
+
+        mapSettings.setDestinationCrs(self.project_crs)
+        mapSettings.setLayers(self.rlayers)
+
+        rect = self.chunk.toRectangle()
+        mapSettings.setExtent(rect)
+        mapSettings.setOutputSize(img.size())
+
+        p = QPainter()
+        p.begin(img)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        render = QgsMapRendererCustomPainterJob(mapSettings, p)
+        render.start()
+        render.waitForFinished()
+        p.end()
+
+        try:
+            # Convert QImage to np.array
+            ptr = img.bits()
+            ptr.setsize(img.height() * img.width() * 3)
+            img_np = np.frombuffer(ptr, np.uint8).reshape((img.height(), img.width(), 3))
+
+            # Call the function to convert the image to a geotiff tif and save it as bytes
+            rect = self.chunk.toRectangle()
+            x_min, y_min, x_max, y_max = rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum()
+
+            tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_min, x_max, y_max)
+
+        except Exception as e:
+            self.messageReceived.emit((str(e), Qgis.Critical, None, None))
+            return False
+
+        boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'
+        body = (
+            '--' + boundary,
+            'Content-Disposition: form-data; name="image"; filename="rendered.tif"',
+            'Content-Type: application/octet-stream',
+            '',
+            tif_data,
+            '--' + boundary + '--',
+            ''
+        )
+        body = b'\r\n'.join([part.encode() if isinstance(part, str) else part for part in body])
+
+        headers = {
+            'Content-Type': 'multipart/form-data; boundary=' + boundary,
+            'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo"),
+            'x-chunk-id': str(self.chunk)
+        }
+
+        self.setProgress(10.0)
+
+        try:
+            print('connecting to staging server...')
+            conn = http.client.HTTPSConnection("fly-inference-staging-night-2042.fly.dev")
+            conn.request("POST", f"/chunk/v2", body, headers)
+            res = conn.getresponse()
+            self.setProgress(80.0)
+            if res.status != 200:
+                error_payload = res.read().decode('utf-8')
+
+                try:
+                    error_details = json.loads(error_payload)
+                    self.messageReceived.emit((
+                        error_details.get('message'),
+                        Qgis.Critical,
+                        error_details.get('link'),
+                        error_details.get('link_text')
+                    ))
+                except json.JSONDecodeError:
+                    self.messageReceived.emit((error_payload, Qgis.Critical, None, None))
+
+                return False
+        except BrokenPipeError:
+            self.messageReceived.emit(('Autocomplete server connection was interrupted (BrokenPipeError)', Qgis.Critical, None, None))
+            return False
+        except ssl.SSLCertVerificationError:
+            self.messageReceived.emit(('Autocomplete server failed SSL Certificate Verification', Qgis.Critical, None, None))
+            return False
+        except Exception as e:
+            self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None))
+            return False
+
+        return True
+
+    def finished(self, result):
+        pass
+
+    def cancel(self):
+        super().cancel()
+
+
+
 def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
     # Open the PNG file
     (rasterYSize, rasterXSize, rasterCount) = img_np.shape

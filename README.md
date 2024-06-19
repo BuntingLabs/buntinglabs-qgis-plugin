@@ -20,3 +20,10 @@ is returned.
 ### License
 
 This repository is licensed under the GNU GPLv2.
+
+# performance
+hover start to finish task time:
+0.784 sec
+0.913
+0.834
+0.8388
