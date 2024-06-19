@@ -233,8 +233,8 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         cur_tree = self.trees[self.map_cache.uniq_id]
         path, cost = cur_tree.dijkstra(
-            cur_tree.idx_for_closest(self.vertices[-1]),
-            cur_tree.idx_for_closest(pt)
+            cur_tree.closest_node_to(self.vertices[-1]),
+            cur_tree.closest_node_to(pt)
         )
         if len(path) == 0:
             return None

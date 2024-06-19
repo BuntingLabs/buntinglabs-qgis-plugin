@@ -10,11 +10,7 @@ class TrajectoryTree:
     def __init__(self, pts_costs, pts_paths, params):
         self.params = params # (dx, dy, x_min, y_max)
 
-        self.graph_nodes = []
-        for path in pts_paths.keys():
-            orig, dest = map(int, path.split('_'))
-            self.graph_nodes.extend([orig, dest])
-
+        # Hidden, with a setter
         self.graph_neighbors = defaultdict(list)
         for path, cost in pts_costs.items():
             orig, dest = map(int, path.split('_'))
@@ -26,17 +22,18 @@ class TrajectoryTree:
 
     @lru_cache(maxsize=1)
     def _graph_nodes_coords(self):
-        return [np.unravel_index(node, (600, 600)) for node in self.graph_nodes]
+        # I think this union is unnecessary but doesn't hurt
+        graph_nodes = list(self.graph_neighbors.keys())
+        return [(np.unravel_index(int(node), (600, 600)), node) for node in graph_nodes]
 
-    def idx_for_closest(self, pt: QgsPointXY):
+    def closest_node_to(self, pt: QgsPointXY):
         img_x, img_y = (pt.x() - self.params[2]) / self.params[0], -(pt.y() - self.params[3]) / self.params[1]
         graph_nodes_coords = self._graph_nodes_coords()
-        dists = [(img_x - x) ** 2 + (img_y - y) ** 2 for y, x in graph_nodes_coords]
-        return dists.index(min(dists))
+        dists = [((img_x - x) ** 2 + (img_y - y) ** 2, node) for ((y, x), node) in graph_nodes_coords]
+        return min(dists)[1]
 
     @lru_cache(maxsize=100)
-    def dijkstra(self, start_idx: int, end_idx: int):
-        start, end = self.graph_nodes[start_idx], self.graph_nodes[end_idx]
+    def dijkstra(self, start: int, end: int):
         queue = [(0, start)]
         distances = {start: 0}
         previous_nodes = {start: None}
