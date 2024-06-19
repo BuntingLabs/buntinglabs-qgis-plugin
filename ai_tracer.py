@@ -71,28 +71,28 @@ AutocompleteCacheEntry = namedtuple('AutocompleteCacheEntry', ['uniq_id', 'n_px'
 class Chunk:
     CONST_CHUNK_SIZE = 256
 
-    def __init__(self, x, y, dx, dy):
+    def __init__(self, x, y, dxdy):
         self.x = x
         self.y = y
-        self.dx = dx
-        self.dy = dy
+        self.dxdy = dxdy
 
     def __str__(self):
-        return f"Chunk(x={self.x}, y={self.y}, dx={self.dx}, dy={self.dy})"
+        return f"Chunk({self.x},{self.y},{int(100*self.dxdy)})"
 
     # gives a Chunk
     @staticmethod
     def pointToChunk(pt: QgsPointXY, map_cache: AutocompleteCacheEntry):
         (x_min, dx, y_max, dy) = (map_cache.x_min, map_cache.dx, map_cache.y_max, map_cache.dy)
-        ix, iy = (pt.x() / dx, pt.y() / dy)
+        assert abs(dx - dy) < 1e-6, "dx and dy should be close"
+        ix, iy = (pt.x() / dx, pt.y() / dx)
 
-        return Chunk(int(ix / Chunk.CONST_CHUNK_SIZE), int(iy / Chunk.CONST_CHUNK_SIZE), dx, dy)
+        return Chunk(int(ix / Chunk.CONST_CHUNK_SIZE), int(iy / Chunk.CONST_CHUNK_SIZE), dx)
 
     def toPolygon(self) -> QgsGeometry:
-        x_min = self.dx * self.x * self.CONST_CHUNK_SIZE
-        x_max = self.dx * (self.x + 1) * self.CONST_CHUNK_SIZE
-        y_min = self.dy * self.y * self.CONST_CHUNK_SIZE
-        y_max = self.dy * (self.y + 1) * self.CONST_CHUNK_SIZE
+        x_min = self.dxdy * self.x * self.CONST_CHUNK_SIZE
+        x_max = self.dxdy * (self.x + 1) * self.CONST_CHUNK_SIZE
+        y_min = self.dxdy * self.y * self.CONST_CHUNK_SIZE
+        y_max = self.dxdy * (self.y + 1) * self.CONST_CHUNK_SIZE
 
         points = [
             QgsPointXY(x_min, y_min),
@@ -105,10 +105,10 @@ class Chunk:
         return QgsGeometry.fromPolygonXY([points])
 
     def toRectangle(self) -> QgsRectangle:
-        x_min = self.dx * self.x * self.CONST_CHUNK_SIZE
-        x_max = self.dx * (self.x + 1) * self.CONST_CHUNK_SIZE
-        y_min = self.dy * self.y * self.CONST_CHUNK_SIZE
-        y_max = self.dy * (self.y + 1) * self.CONST_CHUNK_SIZE
+        x_min = self.dxdy * self.x * self.CONST_CHUNK_SIZE
+        x_max = self.dxdy * (self.x + 1) * self.CONST_CHUNK_SIZE
+        y_min = self.dxdy * self.y * self.CONST_CHUNK_SIZE
+        y_max = self.dxdy * (self.y + 1) * self.CONST_CHUNK_SIZE
         return QgsRectangle(x_min, y_min, x_max, y_max)
 
 class AutocompleteCache:
