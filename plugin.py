@@ -492,6 +492,8 @@ class BuntingLabsPlugin:
 
         self.iface.removeToolBarIcon(self.action)
 
+        self.tracer.deactivate()
+
     def toolbarClick(self):
         if self.action.isChecked():
             # Depending on how many settings someone has already set,
