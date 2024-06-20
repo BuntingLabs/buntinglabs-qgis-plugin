@@ -4,6 +4,7 @@ from enum import Enum
 from collections import namedtuple
 import cProfile, pstats, io
 from typing import List
+import random
 import heapq
 
 from qgis.PyQt.QtCore import Qt, QSettings, QUrl
@@ -20,7 +21,8 @@ from qgis.core import QgsField
 from PyQt5.QtCore import QVariant
 
 
-from .tracing_task import AutocompleteTask, UploadChunkTask
+from .tracing_task import AutocompleteTask, UploadChunkTask, SolveTask, \
+    rasterUnitsPerPixelEstimate, layerDoesIntersect
 from .trajectory import Trajectory, TrajectoryClick
 from .trajectory_tree import TrajectoryTree
 
@@ -77,16 +79,14 @@ class Chunk:
         self.dxdy = dxdy
 
     def __str__(self):
-        return f"Chunk({self.x},{self.y},{int(100*self.dxdy)})"
+        return f"Chunk({self.x},{self.y},{self.dxdy})"
 
     # gives a Chunk
     @staticmethod
-    def pointToChunk(pt: QgsPointXY, map_cache: AutocompleteCacheEntry):
-        (x_min, dx, y_max, dy) = (map_cache.x_min, map_cache.dx, map_cache.y_max, map_cache.dy)
-        assert abs(dx - dy) < 1e-6, "dx and dy should be close"
-        ix, iy = (pt.x() / dx, pt.y() / dx)
+    def pointToChunk(pt: QgsPointXY, dxdy: float):
+        ix, iy = (pt.x() / dxdy, pt.y() / dxdy)
 
-        return Chunk(int(ix / Chunk.CONST_CHUNK_SIZE), int(iy / Chunk.CONST_CHUNK_SIZE), dx)
+        return Chunk(int(ix / Chunk.CONST_CHUNK_SIZE), int(iy / Chunk.CONST_CHUNK_SIZE), dxdy)
 
     def toPolygon(self) -> QgsGeometry:
         x_min = self.dxdy * self.x * self.CONST_CHUNK_SIZE
@@ -210,6 +210,9 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.graphs = dict()
         self.trees = dict()
 
+        self.last_tree = None
+        self.last_graph = None
+
     # This will only be called in QGIS is older than 3.32, hopefully.
     def supportsTechnique(self, technique):
         # we do not support shape or circular
@@ -270,19 +273,104 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         return points
 
+    def indexToPoint(self, idx: int) -> QgsPointXY:
+        img_height, img_width = self.last_tree.img_params
+        x_min, y_min, dxdy = self.last_tree.params
+        node = np.unravel_index(idx, (img_height, img_width))
+        return QgsPointXY(node[1] * dxdy + x_min * 256 * dxdy, y_min * 256 * dxdy + node[0] * dxdy)
+
     def solvePathToPoint(self, pt: QgsPointXY) -> List[QgsPointXY]:
-        if self.map_cache is None or len(self.vertices) == 0:
+        if self.last_tree is None or len(self.vertices) == 0:
             return [pt]
 
-        (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
-        (_, pts_paths) = self.graphs['penis']
+        # (x_min, y_max, dxdy) = self.last_tree.params
+        # (x_min, dx, y_max, dy) = (self.map_cache.x_min, self.map_cache.dx, self.map_cache.y_max, self.map_cache.dy)
+        (_, pts_paths) = self.last_graph
+
+        cur_tree = self.last_tree
+        path, cost = cur_tree.dijkstra(
+            cur_tree.closest_node_to(self.vertices[-1]),
+            cur_tree.closest_node_to(pt)
+        )
+        print('dijkstra', path)
+        if len(path) == 0:
+            return None
+        # Convert path to coordinates
+        # path = []
+
+        # Replace bits of the path as possible
+        minimized_path = [path[0]]
+        # minimized_path = [[path[0][1], path[0][0]]] # Coordinate order gets flipped for some reason
+        for i in range(len(path)-1):
+            prev, next = path[i], path[i+1]
+            # (ix, iy), (jx, jy) = np.unravel_index(prev, (1200, 1200)), np.unravel_index(next, (1200, 1200))
+
+            if f"{prev}_{next}" in pts_paths:
+                minimized_path.extend(pts_paths[f"{prev}_{next}"][1:])
+            elif f"{next}_{prev}" in pts_paths:
+                minimized_path.extend(reversed(pts_paths[f"{next}_{prev}"][:-1]))
+            else:
+                minimized_path.append(next)
+
+        # convert to coordinates
+        return [ self.indexToPoint(idx) for idx in minimized_path ]
+
+    def calculateDxDy(self):
+        project_crs = QgsProject.instance().crs()
+        # By default, we zoom out 2.5x from the user's perspective.
+        proj_crs_units_per_screen_pixel = 2.5 * (self.plugin.iface.mapCanvas().extent().width() / self.plugin.iface.mapCanvas().width())
+
+        if len(self.vertices) < 2:
+            return proj_crs_units_per_screen_pixel
+
+        rlayers = find_raster_layers(QgsProject.instance().layerTreeRoot())
+        # Assuming self.rlayers is a list of QgsRasterLayer objects
+        # If the user drags in a raster layer without a CRS, default behavior is to give it "unknown"
+        # aka invalid CRS, which (to my knowledge) does not reproject and is equivalent to being in the same CRS.
+        intersecting_layers = [ rlayer for rlayer in rlayers if layerDoesIntersect(rlayer, project_crs, self.vertices[-1]) ]
+
+        # ( units in project CRS ) / ( 1 raster layer's pixel ), independent of raster CRS based on Euclidean approximation
+        rupps = [ rasterUnitsPerPixelEstimate(r, project_crs, self.vertices[-2:]) for r in intersecting_layers ]
+
+        # Use the resolution of the topmost raster layer
+        topmost_res_at_pt = rupps[0] if len(intersecting_layers) >= 1 else proj_crs_units_per_screen_pixel
+
+        # Rendering resolution in units per pixel
+        dx = max(proj_crs_units_per_screen_pixel, topmost_res_at_pt)
+
+        return dx
+
+    def canvasMoveEvent(self, e):
+        if self.isAutoSnapEnabled():
+            snapMatch = self.snapper.snapToMap(e.pos())
+            self.snapIndicator.setMatch(snapMatch)
+
+        if self.snapIndicator.match().type():
+            pt = self.snapIndicator.match().point()
+        else:
+            pt = self.toMapCoordinates(e.pos())
 
         # Highlight chunk
-        cur_chunk = Chunk.pointToChunk(pt, self.map_cache)
+        cur_chunk = Chunk.pointToChunk(pt, self.calculateDxDy())
         self.chunk_rb.setToGeometry(cur_chunk.toPolygon(), None)
 
+        if len(self.vertices) == 0:
+            # Nothing to do!
+            return
+
+        # Relative to map_cache
+        if self.last_tree is not None:
+            path_map_pts = self.solvePathToPoint(pt)
+            print('calling solvePathToPoint', path_map_pts)
+
+            # None = failed to navigate
+            self.rb.setToGeometry(
+                QgsGeometry.fromPolylineXY(path_map_pts if path_map_pts is not None else []),
+                None
+            )
+            return
         # Upload if it hasn't already been
-        if str(cur_chunk) not in self.chunk_cache:
+        elif cur_chunk is not None and str(cur_chunk) not in self.chunk_cache:
             print(f'=> missing chunk {cur_chunk}')
             root = QgsProject.instance().layerTreeRoot()
             rlayers = find_raster_layers(root)
@@ -318,64 +406,12 @@ class AIVectorizerTool(QgsMapToolCapture):
             chunk_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
             chunk_task.taskCompleted.connect(lambda: print("done"))
             QgsApplication.taskManager().addTask(chunk_task)
-
-        cur_tree = self.trees[self.map_cache.uniq_id]
-        path, cost = cur_tree.dijkstra(
-            cur_tree.closest_node_to(self.vertices[-1]),
-            cur_tree.closest_node_to(pt)
-        )
-        if len(path) == 0:
-            return None
-        # Convert path to coordinates
-        # path = []
-
-        # Replace bits of the path as possible
-        minimized_path = [path[0]]
-        # minimized_path = [[path[0][1], path[0][0]]] # Coordinate order gets flipped for some reason
-        for i in range(len(path)-1):
-            prev, next = path[i], path[i+1]
-            # (ix, iy), (jx, jy) = np.unravel_index(prev, (1200, 1200)), np.unravel_index(next, (1200, 1200))
-
-            if f"{prev}_{next}" in pts_paths:
-                minimized_path.extend(pts_paths[f"{prev}_{next}"][1:])
-            elif f"{next}_{prev}" in pts_paths:
-                minimized_path.extend(reversed(pts_paths[f"{next}_{prev}"][:-1]))
-            else:
-                minimized_path.append(next)
-
-        # convert to coordinates
-        minimized_path = [np.unravel_index(node, (600, 600)) for node in minimized_path]
-        minimized_path = [[int(node[0]), int(node[1])] for node in minimized_path]
-
-        path_map_pts = [ QgsPointXY(node[1] * dx + x_min, y_max - node[0] * dy) for node in minimized_path ]
-        return path_map_pts
-
-    def canvasMoveEvent(self, e):
-        if self.isAutoSnapEnabled():
-            snapMatch = self.snapper.snapToMap(e.pos())
-            self.snapIndicator.setMatch(snapMatch)
-
-        if len(self.vertices) == 0:
-            # Nothing to do!
-            return
-
-        if self.snapIndicator.match().type():
-            pt = self.snapIndicator.match().point()
         else:
-            pt = self.toMapCoordinates(e.pos())
-
-        # Relative to map_cache
-        if self.map_cache is not None and self.map_cache.uniq_id in self.graphs:
-            path_map_pts = self.solvePathToPoint(pt)
-
-            # None = failed to navigate
-            self.rb.setToGeometry(
-                QgsGeometry.fromPolylineXY(path_map_pts if path_map_pts is not None else []),
-                None
-            )
-            return
-        else:
-            pass
+            # it's already been retrieved
+            solve_task = SolveTask(self)
+            print('--> solve task')
+            solve_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
+            QgsApplication.taskManager().addTask(solve_task)
 
         hover_cache_entry = []
 
@@ -549,66 +585,72 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.startCapturing()
 
             # Analyze the map if we have >=2 vertices
-            if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier):
-                root = QgsProject.instance().layerTreeRoot()
-                rlayers = find_raster_layers(root)
-                project_crs = QgsProject.instance().crs()
+            # if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier):
+            #     root = QgsProject.instance().layerTreeRoot()
+            #     rlayers = find_raster_layers(root)
+            #     project_crs = QgsProject.instance().crs()
 
-                self.autocomplete_task = AutocompleteTask(
-                    self,
-                    vlayer,
-                    rlayers,
-                    project_crs
-                )
+            #     self.autocomplete_task = AutocompleteTask(
+            #         self,
+            #         vlayer,
+            #         rlayers,
+            #         project_crs
+            #     )
 
-                # self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
-                self.autocomplete_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
-                self.autocomplete_task.cacheEntryCreated.connect(lambda args: self.handleCacheEntryCreated(*args))
+            #     # self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
+            #     self.autocomplete_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
+            #     self.autocomplete_task.cacheEntryCreated.connect(lambda args: self.handleCacheEntryCreated(*args))
 
-                self.autocomplete_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
+            #     # self.autocomplete_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
 
-                QgsApplication.taskManager().addTask(
-                    self.autocomplete_task,
-                )
+            #     QgsApplication.taskManager().addTask(
+            #         self.autocomplete_task,
+            #     )
 
-    def handleGraphConstructed(self, pts_cost, pts_paths):
-        dx, dy, x_min, y_max = self.map_cache.dx, self.map_cache.dy, self.map_cache.x_min, self.map_cache.y_max
+    def handleGraphConstructed(self, pts_cost, pts_paths, params, img_params):
+        (x_min, y_min, dxdy) = params
+        (img_height, img_width) = img_params
+
+        self.last_tree = TrajectoryTree(pts_cost, (x_min, y_min, dxdy), img_params)
+        self.last_graph = (pts_cost, pts_paths)
 
         # Create a vector layer for graph nodes
-        # node_layer = QgsVectorLayer("Point?crs=EPSG:3857", "Graph Nodes", "memory")
-        # node_pr = node_layer.dataProvider()
+        node_layer = QgsVectorLayer("Point?crs=EPSG:3857", "Graph Nodes", "memory")
+        node_pr = node_layer.dataProvider()
         
-        # # Create a vector layer for graph paths with a cost attribute
-        # path_layer = QgsVectorLayer("LineString?crs=EPSG:3857", "Graph Paths", "memory")
-        # path_layer.dataProvider().addAttributes([QgsField("cost", QVariant.Double)])
-        # path_layer.updateFields()
-        # path_pr = path_layer.dataProvider()
+        # Create a vector layer for graph paths with a cost attribute
+        path_layer = QgsVectorLayer("LineString?crs=EPSG:3857", "Graph Paths", "memory")
+        path_layer.dataProvider().addAttributes([QgsField("cost", QVariant.Double)])
+        path_layer.updateFields()
+        path_pr = path_layer.dataProvider()
         
-        # for nodes, path_in_between in pts_paths.items():
-        #     ix, iy, jx, jy = map(int, nodes.split('_'))
+        for nodes, path_in_between in pts_paths.items():
+            i_idx, j_idx = map(int, nodes.split('_'))
+            # ix, iy = np.unravel_index(i_idx, (img_height, img_width))
+            # jx, jy = np.unravel_index(j_idx, (img_height, img_width))
 
-        #     # Add nodes to the node layer and sindex_points
-        #     for x, y in [(ix, iy), (jx, jy)]:
-        #         point = QgsPointXY(x * dx + x_min, y_max - y * dy)
-        #         feature = QgsFeature()
-        #         feature.setGeometry(QgsGeometry.fromPointXY(point))
-        #         node_pr.addFeature(feature)
+            # Add nodes to the node layer and sindex_points
+            for pt_idx in [i_idx, j_idx]:
+                point = self.indexToPoint(pt_idx)
+                feature = QgsFeature()
+                feature.setGeometry(QgsGeometry.fromPointXY(point))
+                node_pr.addFeature(feature)
             
-        #     # Add path to the path layer with cost attribute
-        #     line_points = [(ix * dx + x_min, y_max - iy * dy)] + \
-        #                   [(x * dx + x_min, y_max - y * dy) for y, x in path_in_between] + \
-        #                   [(jx * dx + x_min, y_max - jy * dy)]
-        #     line_string = QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in line_points])
-        #     length = line_string.length() + 1.0
-        #     feature = QgsFeature()
-        #     feature.setGeometry(line_string)
-        #     feature.setAttributes([pts_cost[nodes] / length])
-        #     path_pr.addFeature(feature)
-        # node_layer.updateExtents()
-        # path_layer.updateExtents()
-        # QgsProject.instance().addMapLayers([node_layer, path_layer], True)
+            # Add path to the path layer with cost attribute
+            line_points = [ self.indexToPoint(pt_idx) for pt_idx in path_in_between ]
+            line_string = QgsGeometry.fromPolylineXY(line_points)
+            length = line_string.length() + 1.0
+            feature = QgsFeature()
+            feature.setGeometry(line_string)
+            feature.setAttributes([pts_cost[nodes] / length])
+            path_pr.addFeature(feature)
+        node_layer.updateExtents()
+        path_layer.updateExtents()
+        QgsProject.instance().addMapLayers([node_layer, path_layer], True)
 
-        self.trees[self.map_cache.uniq_id] = TrajectoryTree(pts_cost, pts_paths, (dx, dy, x_min, y_max))
+        return
+
+        self.trees[self.map_cache.uniq_id] = TrajectoryTree(pts_cost, (dx, dy, x_min, y_max))
 
         if self.map_cache is not None:
             self.graphs[self.map_cache.uniq_id] = (pts_cost, pts_paths)

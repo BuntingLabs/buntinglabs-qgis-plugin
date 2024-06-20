@@ -7,8 +7,9 @@ import numpy as np
 from qgis.core import QgsPointXY
 
 class TrajectoryTree:
-    def __init__(self, pts_costs, pts_paths, params):
-        self.params = params # (dx, dy, x_min, y_max)
+    def __init__(self, pts_costs, params, img_params):
+        self.params = params # (x_min, y_max, dxdy)
+        self.img_params = img_params # (img_height, img_width)
 
         # Hidden, with a setter
         self.graph_neighbors = defaultdict(list)
@@ -27,7 +28,9 @@ class TrajectoryTree:
         return [(np.unravel_index(int(node), (600, 600)), node) for node in graph_nodes]
 
     def closest_node_to(self, pt: QgsPointXY):
-        img_x, img_y = (pt.x() - self.params[2]) / self.params[0], -(pt.y() - self.params[3]) / self.params[1]
+        x_min, y_max, dxdy = self.params
+
+        img_x, img_y = (pt.x() - x_min) / dxdy, -(pt.y() - y_max) / dxdy
         graph_nodes_coords = self._graph_nodes_coords()
         dists = [((img_x - x) ** 2 + (img_y - y) ** 2, node) for ((y, x), node) in graph_nodes_coords]
         return min(dists)[1]

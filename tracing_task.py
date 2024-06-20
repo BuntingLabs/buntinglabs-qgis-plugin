@@ -538,7 +538,102 @@ class UploadChunkTask(QgsTask):
     def cancel(self):
         super().cancel()
 
+class SolveTask(QgsTask):
+    # This task can run in the background of QGIS, streaming results
+    # back from the inference server.
 
+    # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
+    messageReceived = pyqtSignal(tuple)
+
+    graphConstructed = pyqtSignal(tuple)
+
+    def __init__(self, tracing_tool):
+        super().__init__(
+            'Bunting Labs AI Vectorizer is processing your map...',
+            QgsTask.CanCancel
+        )
+
+        self.tracing_tool = tracing_tool
+
+    def run(self):
+        self.setProgress(0.0)
+
+        # Get all coordinates
+        # [ [-(y - y_max)/dy, (x - x_min)/dx] for (x, y) in self.tracing_tool.vertices ]
+        vector_payload = json.dumps({
+            'coordinates': [ [y, x] for (x, y) in self.tracing_tool.vertices ]
+        })
+
+        boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'
+        body = (
+            '--' + boundary,
+            'Content-Disposition: form-data; name="vector"; filename="vector.json"',
+            'Content-Type: application/json',
+            '',
+            vector_payload,
+            '--' + boundary + '--',
+            ''
+        )
+        body = b'\r\n'.join([part.encode() if isinstance(part, str) else part for part in body])
+
+        headers = {
+            'Content-Type': 'multipart/form-data; boundary=' + boundary,
+            'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo")
+        }
+
+        self.setProgress(10.0)
+
+        try:
+            print('connecting to staging server...')
+            conn = http.client.HTTPSConnection("fly-inference-staging-night-2042.fly.dev")
+            conn.request("POST", "/chunk/v2/solve", body, headers)
+            res = conn.getresponse()
+            self.setProgress(80.0)
+            if res.status != 200:
+                error_payload = res.read().decode('utf-8')
+
+                try:
+                    error_details = json.loads(error_payload)
+                    self.messageReceived.emit((
+                        error_details.get('message'),
+                        Qgis.Critical,
+                        error_details.get('link'),
+                        error_details.get('link_text')
+                    ))
+                except json.JSONDecodeError:
+                    self.messageReceived.emit((error_payload, Qgis.Critical, None, None))
+
+                return False
+        except BrokenPipeError:
+            self.messageReceived.emit(('Autocomplete server connection was interrupted (BrokenPipeError)', Qgis.Critical, None, None))
+            return False
+        except ssl.SSLCertVerificationError:
+            self.messageReceived.emit(('Autocomplete server failed SSL Certificate Verification', Qgis.Critical, None, None))
+            return False
+        except Exception as e:
+            self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None))
+            return False
+
+        buffer = res.read().decode('utf-8')
+        data = json.loads(buffer)
+
+        pts_cost = data['costs']
+        pts_paths = data['paths']
+        x_min, y_min, dxdy = data['x_min'], data['y_min'], data['dxdy']
+        img_height, img_width = data['img_height'], data['img_width']
+
+        print('pts_cost', pts_cost)
+        print('pts_path', pts_paths)
+
+        self.graphConstructed.emit((pts_cost, pts_paths, (x_min, y_min, dxdy), (img_height, img_width)))
+
+        return True
+
+    def finished(self, result):
+        pass
+
+    def cancel(self):
+        super().cancel()
 
 def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
     # Open the PNG file
