@@ -276,9 +276,9 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def indexToPoint(self, idx: int) -> QgsPointXY:
         img_height, img_width = self.last_tree.img_params
-        x_min, y_min, dxdy = self.last_tree.params
+        x_min, y_min, dxdy, y_max = self.last_tree.params
         node = np.unravel_index(idx, (img_height, img_width))
-        return QgsPointXY(node[1] * dxdy + x_min * 256 * dxdy, y_min * 256 * dxdy + node[0] * dxdy)
+        return QgsPointXY(node[1] * dxdy + x_min * 256 * dxdy, y_max * 256 * dxdy - node[0] * dxdy)
 
     def solvePathToPoint(self, pt: QgsPointXY) -> List[QgsPointXY]:
         if self.last_tree is None or len(self.vertices) == 0:
@@ -607,10 +607,10 @@ class AIVectorizerTool(QgsMapToolCapture):
             #     )
 
     def handleGraphConstructed(self, pts_cost, pts_paths, params, img_params):
-        (x_min, y_min, dxdy) = params
+        (x_min, y_min, dxdy, y_max) = params
         (img_height, img_width) = img_params
 
-        self.last_tree = TrajectoryTree(pts_cost, (x_min, y_min, dxdy), img_params)
+        self.last_tree = TrajectoryTree(pts_cost, (x_min, y_min, dxdy, y_max), img_params)
         self.last_graph = (pts_cost, pts_paths)
 
         # Create a vector layer for graph nodes

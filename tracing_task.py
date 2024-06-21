@@ -588,12 +588,13 @@ class SolveTask(QgsTask):
         pts_cost = data['costs']
         pts_paths = data['paths']
         x_min, y_min, dxdy = data['x_min'], data['y_min'], data['dxdy']
+        y_max = data['y_max']
         img_height, img_width = data['img_height'], data['img_width']
 
         print('pts_cost', pts_cost)
         print('pts_path', pts_paths)
 
-        self.graphConstructed.emit((pts_cost, pts_paths, (x_min, y_min, dxdy), (img_height, img_width)))
+        self.graphConstructed.emit((pts_cost, pts_paths, (x_min, y_min, dxdy, y_max), (img_height, img_width)))
 
         return True
 
