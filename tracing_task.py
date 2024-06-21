@@ -399,41 +399,9 @@ class UploadChunkTask(QgsTask):
     def run(self):
         self.setProgress(0.0)
 
-        # By default, we zoom out 2.5x from the user's perspective.
-        proj_crs_units_per_screen_pixel = 2.5 * (self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width())
-
         # The resolution of a raster layer is defined as the ground distance covered by one pixel
         # of the raster. Therefore, a smaller resolution value means a higher resolution raster.
         mapEpsgCode = self.project_crs.postgisSrid()
-
-        # Assuming self.rlayers is a list of QgsRasterLayer objects
-        # If the user drags in a raster layer without a CRS, default behavior is to give it "unknown"
-        # aka invalid CRS, which (to my knowledge) does not reproject and is equivalent to being in the same CRS.
-        intersecting_layers = [ rlayer for rlayer in self.rlayers if layerDoesIntersect(rlayer, self.project_crs, self.tracing_tool.vertices[-1]) ]
-
-        # ( units in project CRS ) / ( 1 raster layer's pixel ), independent of raster CRS based on Euclidean approximation
-        rupps = [ rasterUnitsPerPixelEstimate(r, self.project_crs, self.tracing_tool.vertices[-2:]) for r in intersecting_layers ]
-
-        # Use the resolution of the topmost raster layer
-        topmost_res_at_pt = rupps[0] if len(intersecting_layers) >= 1 else proj_crs_units_per_screen_pixel
-
-        # Rendering resolution in units per pixel
-        dx = max(proj_crs_units_per_screen_pixel, topmost_res_at_pt)
-        dy = dx
-
-        if len(self.rlayers) == 0:
-            self.messageReceived.emit((
-                'No raster layers are loaded. Load a GeoTIFF to use autocomplete.',
-                Qgis.Critical, None, None
-            ))
-            return False
-
-        # First, if they clicked outside of all raster layers, warn them.
-        if len(intersecting_layers) == 0:
-            self.messageReceived.emit((
-                'No raster layers found beneath your autocomplete tool',
-                Qgis.Warning, None, None
-            ))
 
         # create image
         # Format_RGB888 is 24-bit (8 bits each) for each color channel, unlike

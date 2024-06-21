@@ -86,7 +86,8 @@ class Chunk:
     def pointToChunk(pt: QgsPointXY, dxdy: float):
         ix, iy = (pt.x() / dxdy, pt.y() / dxdy)
 
-        return Chunk(int(ix / Chunk.CONST_CHUNK_SIZE), int(iy / Chunk.CONST_CHUNK_SIZE), dxdy)
+        # Carefully use // instead of /, to avoid rounding towards zero.
+        return Chunk(int(ix // Chunk.CONST_CHUNK_SIZE), int(iy // Chunk.CONST_CHUNK_SIZE), dxdy)
 
     def toPolygon(self) -> QgsGeometry:
         x_min = self.dxdy * self.x * self.CONST_CHUNK_SIZE
@@ -292,7 +293,6 @@ class AIVectorizerTool(QgsMapToolCapture):
             cur_tree.closest_node_to(self.vertices[-1]),
             cur_tree.closest_node_to(pt)
         )
-        print('dijkstra', path)
         if len(path) == 0:
             return None
         # Convert path to coordinates
@@ -320,8 +320,8 @@ class AIVectorizerTool(QgsMapToolCapture):
         # By default, we zoom out 2.5x from the user's perspective.
         proj_crs_units_per_screen_pixel = 2.5 * (self.plugin.iface.mapCanvas().extent().width() / self.plugin.iface.mapCanvas().width())
 
-        if len(self.vertices) < 2:
-            return proj_crs_units_per_screen_pixel
+        if True:
+            return 1.0
 
         rlayers = find_raster_layers(QgsProject.instance().layerTreeRoot())
         # Assuming self.rlayers is a list of QgsRasterLayer objects
@@ -361,7 +361,6 @@ class AIVectorizerTool(QgsMapToolCapture):
         # Relative to map_cache
         if self.last_tree is not None:
             path_map_pts = self.solvePathToPoint(pt)
-            print('calling solvePathToPoint', path_map_pts)
 
             # None = failed to navigate
             self.rb.setToGeometry(

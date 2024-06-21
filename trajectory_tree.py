@@ -25,12 +25,12 @@ class TrajectoryTree:
     def _graph_nodes_coords(self):
         # I think this union is unnecessary but doesn't hurt
         graph_nodes = list(self.graph_neighbors.keys())
-        return [(np.unravel_index(int(node), (600, 600)), node) for node in graph_nodes]
+        return [(np.unravel_index(int(node), (self.img_params[0], self.img_params[1])), node) for node in graph_nodes]
 
     def closest_node_to(self, pt: QgsPointXY):
         x_min, y_max, dxdy = self.params
 
-        img_x, img_y = (pt.x() - x_min) / dxdy, -(pt.y() - y_max) / dxdy
+        img_x, img_y = (pt.x() - x_min*256*dxdy) / dxdy, (pt.y() - y_max*256*dxdy) / dxdy
         graph_nodes_coords = self._graph_nodes_coords()
         dists = [((img_x - x) ** 2 + (img_y - y) ** 2, node) for ((y, x), node) in graph_nodes_coords]
         return min(dists)[1]
