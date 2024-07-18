@@ -268,7 +268,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         return rb
 
     # msg_type is Qgis.Critical, Qgis.Info, Qgis.Warning, Qgis.success
-    def notifyUserOfMessage(self, msg, msg_type, link_url, link_text):
+    def notifyUserOfMessage(self, msg, msg_type, link_url, link_text, duration):
         widget = self.plugin.iface.messageBar().createMessage("AI Vectorizer", msg)
         button = QPushButton(widget)
 
@@ -280,7 +280,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             button.pressed.connect(self.plugin.openSettings)
 
         widget.layout().addWidget(button)
-        self.plugin.iface.messageBar().pushWidget(widget, msg_type, duration=15)
+        self.plugin.iface.messageBar().pushWidget(widget, msg_type, duration=duration)
 
     def trimVerticesToPoint(self, vertices: List[QgsPointXY], pt: QgsPointXY) -> List[QgsPointXY]:
         assert len(vertices) >= 2

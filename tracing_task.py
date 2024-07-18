@@ -47,7 +47,7 @@ def layerDoesIntersect(rlayer, project_crs, vertex):
 class UploadChunkAndSolveTask(QgsTask):
     # This task can run in the background of QGIS
 
-    # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
+    # Tuple for (error message, Qgis.Critical, error link or None, error button text or None, duration)
     messageReceived = pyqtSignal(tuple)
 
     graphConstructed = pyqtSignal(tuple)
@@ -77,6 +77,8 @@ class UploadChunkAndSolveTask(QgsTask):
         self.start_time = time.time()
         ETs = self.tracing_tool.plugin.expected_time
         self.expected_time = ETs[len(chunks)] if len(chunks) in ETs else 3000
+
+        self.hasNotifiedOfBoot = False
 
     def run(self):
         self.setProgress(0.0)
@@ -129,7 +131,7 @@ class UploadChunkAndSolveTask(QgsTask):
                 rendered_chunks.append(tif_data)
 
             except Exception as e:
-                self.messageReceived.emit((str(e), Qgis.Critical, None, None))
+                self.messageReceived.emit((str(e), Qgis.Critical, None, None, 15))
                 return False
 
         boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'
@@ -198,6 +200,12 @@ class UploadChunkAndSolveTask(QgsTask):
                     remaining = 100.0 - progress
                     progress += remaining * (1 - math.exp(-0.5 * (elapsed_time - expected_duration)))
                 self.setProgress(progress)
+
+                # First server boot can take a second: show a helpful message
+                if elapsed_time > 3.0 and not any(self.tracing_tool.chunk_cache.values()) and not self.hasNotifiedOfBoot:
+                    self.messageReceived.emit(("Server is probably booting, please give it ~10 seconds!", Qgis.Info, None, None, 10))
+                    self.hasNotifiedOfBoot = True
+
             pb_timer.timeout.connect(update_progress)
             pb_timer.start()
 
@@ -219,10 +227,11 @@ class UploadChunkAndSolveTask(QgsTask):
                         error_details.get('message'),
                         Qgis.Critical,
                         error_details.get('link'),
-                        error_details.get('link_text')
+                        error_details.get('link_text'),
+                        15
                     ))
                 except json.JSONDecodeError:
-                    self.messageReceived.emit((error_payload, Qgis.Critical, None, None))
+                    self.messageReceived.emit((error_payload, Qgis.Critical, None, None, 15))
                 return False
 
             self.setProgress(80.0)
@@ -247,7 +256,7 @@ class UploadChunkAndSolveTask(QgsTask):
                 self.metadataReceived.emit((data['chunks_today'], data['chunks_left_today'], data['pricing_tier'], data['fly_instance_id'] if 'fly_instance_id' in data else None))
 
         except Exception as e:
-            self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None))
+            self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None, 15))
             return False
 
         # Update expected time
