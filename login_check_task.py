@@ -1,10 +1,9 @@
 # Copyright 2023 Bunting Labs, Inc.
 
-import urllib
-from urllib import request, parse
-
-from qgis.core import QgsTask, QgsMessageLog, Qgis
-from qgis.PyQt.QtCore import pyqtSignal
+from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
+from qgis.core import QgsTask, QgsMessageLog, Qgis, QgsNetworkAccessManager
+from qgis.PyQt.QtCore import pyqtSignal, QUrl, QEventLoop
+from PyQt5.QtCore import QByteArray
 
 MESSAGE_CATEGORY = 'EmailRegisterTask'
 
@@ -24,32 +23,38 @@ class EmailRegisterTask(QgsTask):
         """Perform the email registration"""
         QgsMessageLog.logMessage('Started task "{}"'.format(self.description()),
                                  MESSAGE_CATEGORY, Qgis.Info)
-        url = 'https://buntinglabs.com/account/register'
+        url = QUrl('https://buntinglabs.com/account/register')
+        request = QNetworkRequest(url)
+        request.setHeader(QNetworkRequest.UserAgentHeader, self.user_agent)
+        request.setRawHeader(b'Host', b'buntinglabs.com')
+
+        data = QByteArray()
+        data.append(f"email={QUrl.toPercentEncoding(self.user_email).data().decode()}")
+        data.append(f"&api_key={QUrl.toPercentEncoding(self.api_key).data().decode()}")
 
         try:
-            data = parse.urlencode({
-                'email': self.user_email,
-                'api_key': self.api_key
-            }).encode()
-            headers = {'User-Agent': self.user_agent, 'Host': 'buntinglabs.com'}
-            req = request.Request(url, data=data, headers=headers)  # POST request with custom user agent and host
-            with request.urlopen(req) as response:
-                if response.getcode() == 200:
-                    self.finishedSignal.emit('created')
-                    return True
-                else:
-                    self.exception = Exception('Registration failed with status code: {}'.format(response.getcode()))
-                    self.finishedSignal.emit('failed')
-                    return False
+            nam = QgsNetworkAccessManager.instance()
+            reply = nam.post(request, data)
+
+            loop = QEventLoop()
+            reply.finished.connect(loop.quit)
+            loop.exec_()
+
+            if reply.error() == QNetworkReply.NoError:
+                self.finishedSignal.emit('created')
+                return True
+            else:
+                if reply.attribute(QNetworkRequest.HttpStatusCodeAttribute) == 500:
+                    if reply.readAll().data().decode() == 'refresh_token':
+                        self.finishedSignal.emit('refresh_token')
+                        return True
+                self.exception = Exception(f'Registration failed with status code: {reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)}')
+                self.finishedSignal.emit('failed')
+                return False
         except Exception as e:
-            if isinstance(e, urllib.error.HTTPError) and e.code == 500:
-                if e.read().decode() == 'refresh_token':
-                    self.finishedSignal.emit('refresh_token')
-                    return True
             self.exception = e
             self.finishedSignal.emit('failed')
             return False
-
     def finished(self, result):
         """This function is called when the task has completed"""
         if result:
@@ -87,22 +92,25 @@ class ValidateEmailTask(QgsTask):
         }
 
         try:
-            # Empty post body but we authenticate before anything else
-            req = request.Request("https://qgis-api.buntinglabs.com/v1", data=b'foo', headers=headers)
-            with request.urlopen(req) as response:
-                if response.getcode() != 200:
-                    self.exception = Exception(response.read().decode('utf-8'))
-                    self.finishedSignal.emit(False)
-                    return False
-        except BrokenPipeError:
-            self.exception = Exception('Got BrokenPipeError when trying to connect to inference server')
-            self.finishedSignal.emit(False)
-            return False
-        except Exception as e:
-            response_body = e.read().decode('utf-8')
-            print(response_body)
+            url = QUrl("https://qgis-api.buntinglabs.com/chunk/v2")
+            request = QNetworkRequest(url)
+            for key, value in headers.items():
+                request.setRawHeader(key.encode(), value.encode())
 
-            self.exception = Exception('Response body: {}'.format(response_body))
+            nam = QgsNetworkAccessManager.instance()
+            reply = nam.post(request, b'foo')
+
+            loop = QEventLoop()
+            reply.finished.connect(loop.quit)
+            loop.exec_()
+
+            if reply.error() != QNetworkReply.NoError:
+                self.exception = Exception(reply.readAll().data().decode('utf-8'))
+                self.finishedSignal.emit(False)
+                return False
+
+        except Exception as e:
+            self.exception = Exception(f'Error: {str(e)}')
             self.finishedSignal.emit(False)
             return False
 

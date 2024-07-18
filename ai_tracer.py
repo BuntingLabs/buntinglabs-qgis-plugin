@@ -1,17 +1,25 @@
-# Copyright 2023 Bunting Labs, Inc.
+# Copyright 2024 Bunting Labs, Inc.
 
+import uuid
 from enum import Enum
+from collections import namedtuple
+from typing import List
+from functools import reduce, lru_cache
 
-from qgis.PyQt.QtCore import Qt, QSettings, QUrl
-from qgis.PyQt.QtWidgets import QPushButton
+from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtWidgets import QPushButton, QProgressBar, QLabel
 from qgis.PyQt.QtGui import QColor, QDesktopServices
-from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsVertexMarker, \
-    QgsSnapIndicator
+from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsSnapIndicator
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
-    QgsPoint, QgsWkbTypes, QgsLayerTreeLayer
+    QgsWkbTypes, QgsLayerTreeLayer, QgsRectangle
+from qgis.core import QgsField
+from PyQt5.QtCore import QVariant
+import numpy as np
 
-from .tracing_task import AutocompleteTask
+from .tracing_task import UploadChunkAndSolveTask, \
+    rasterUnitsPerPixelEstimate, layerDoesIntersect
+from .trajectory_tree import TrajectoryTree
 
 def get_complement(color):
     r, g, b, a = color.red(), color.green(), color.blue(), color.alpha()
@@ -52,12 +60,120 @@ class ShiftClickState(Enum):
     HAS_NOT_CUT = 1
     HAS_CUT = 2
 
+from collections import OrderedDict
+
+# (n_px, n_py) are "normalized" positions
+AutocompleteCacheEntry = namedtuple('AutocompleteCacheEntry', ['uniq_id', 'n_px', 'n_py'])
+
+class Chunk:
+    CONST_CHUNK_SIZE = 256
+
+    def __init__(self, x, y, dxdy):
+        self.x = x
+        self.y = y
+        self.dxdy = dxdy
+
+    def __str__(self):
+        return f"Chunk({self.x},{self.y},{self.dxdy})"
+
+    def __eq__(self, other):
+        if not isinstance(other, Chunk):
+            return NotImplemented
+        return (self.x, self.y, self.dxdy) == (other.x, other.y, other.dxdy)
+
+    def __hash__(self):
+        return hash((self.x, self.y, self.dxdy))
+
+    @staticmethod
+    def strToChunk(chunk_str: str):
+        x, y, dxdy = map(float, chunk_str[6:-1].split(','))
+        return Chunk(int(x), int(y), dxdy)
+
+    # gives a Chunk
+    @staticmethod
+    def pointToChunk(pt: QgsPointXY, dxdy: float):
+        ix, iy = (pt.x() / dxdy, pt.y() / dxdy)
+
+        # Carefully use // instead of /, to avoid rounding towards zero.
+        return Chunk(int(ix // Chunk.CONST_CHUNK_SIZE), int(iy // Chunk.CONST_CHUNK_SIZE), dxdy)
+
+    def toPolygon(self) -> QgsGeometry:
+        x_min = self.dxdy * self.x * self.CONST_CHUNK_SIZE
+        x_max = self.dxdy * (self.x + 1) * self.CONST_CHUNK_SIZE
+        y_min = self.dxdy * self.y * self.CONST_CHUNK_SIZE
+        y_max = self.dxdy * (self.y + 1) * self.CONST_CHUNK_SIZE
+
+        points = [
+            QgsPointXY(x_min, y_min),
+            QgsPointXY(x_max, y_min),
+            QgsPointXY(x_max, y_max),
+            QgsPointXY(x_min, y_max),
+            QgsPointXY(x_min, y_min)
+        ]
+
+        return QgsGeometry.fromPolygonXY([points])
+
+    def toRectangle(self) -> QgsRectangle:
+        x_min = self.dxdy * self.x * self.CONST_CHUNK_SIZE
+        x_max = self.dxdy * (self.x + 1) * self.CONST_CHUNK_SIZE
+        y_min = self.dxdy * self.y * self.CONST_CHUNK_SIZE
+        y_max = self.dxdy * (self.y + 1) * self.CONST_CHUNK_SIZE
+        return QgsRectangle(x_min, y_min, x_max, y_max)
+
+    def distanceToPoint(self, pt: QgsPointXY) -> float:
+        return self.toRectangle().distance(pt)
+
+    @staticmethod
+    def rectangleToChunks(extent: QgsRectangle, dxdy: float) -> list:
+        x_min, y_min, x_max, y_max = extent.xMinimum(), extent.yMinimum(), extent.xMaximum(), extent.yMaximum()
+
+        start_chunk = Chunk.pointToChunk(QgsPointXY(x_min, y_min), dxdy)
+        end_chunk = Chunk.pointToChunk(QgsPointXY(x_max, y_max), dxdy)
+
+        chunks = []
+        for x in range(start_chunk.x, end_chunk.x + 1):
+            for y in range(start_chunk.y, end_chunk.y + 1):
+                chunks.append(Chunk(x, y, dxdy))
+
+        return chunks
+
+class AutocompleteCache:
+    def __init__(self, max_size, round_px=1.0):
+        self.cache = OrderedDict()
+        self.max_size = max_size
+        self.round_px = round_px
+
+    def get(self, uniq_id: str, px: float, py: float):
+        key = AutocompleteCacheEntry(uniq_id, int(px / self.round_px), int(py / self.round_px))
+
+        # Cache hit, use it.
+        if key in self.cache:
+            # Move the key to the end to show that it was recently used
+            self.cache.move_to_end(key)
+            return self.cache[key]
+
+        # Cache miss
+        return None
+
+    def set(self, uniq_id: str, px: float, py: float, value):
+        key = AutocompleteCacheEntry(uniq_id, int(px / self.round_px), int(py / self.round_px))
+
+        if key in self.cache:
+            # Move the key to the end to show that it was recently used
+            self.cache.move_to_end(key)
+        self.cache[key] = value
+        if len(self.cache) > self.max_size:
+            # Remove the first item (least recently used)
+            self.cache.popitem(last=False)
+
+
 # QgsMapToolCapture is a subclass of QgsMapToolEdit that provides
 # additional functionality for map tools that capture geometry. It
 # is an abstract base class for map tools that capture line and
 # polygon geometries. It handles the drawing of rubber bands on the
 # map canvas and the capturing of clicks to build the geometry.
 class AIVectorizerTool(QgsMapToolCapture):
+
     def __init__(self, plugin):
         # Extend QgsMapToolCapture
         cadDockWidget = plugin.iface.cadDockWidget()
@@ -66,14 +182,20 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.plugin = plugin
         self.rb = self.initRubberBand()
 
-        # Options
-        self.num_completions = 100
+        self.chunk_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
+        self.chunk_cache = dict() # True=uploaded, False=uploading
+        self.fly_instance_id = None
+
+        # FOG OF WAR
+        self.fow_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
+        self.fow_rb.setFillColor(QColor(0, 0, 0, 0))  # transparent
+        self.fow_rb.setStrokeColor(QColor(0, 255, 0, 128))  # 50% transparent lime green
+        self.fow_rb.setWidth(6)
+        self.fow_rb.setLineStyle(Qt.SolidLine)
 
         # List of QgsPointXY that represents the new feature
         # via QgsMapTool.toMapCoordinates(), it's in project CRS
         self.vertices = []
-
-        self.autocomplete_task = None
 
         # And take control and go full on editing mode
         self.activate()
@@ -81,35 +203,51 @@ class AIVectorizerTool(QgsMapToolCapture):
         # will follow the moving cursor, once there's a vertex in the chamber
         self.startCapturing()
 
-        self.shift_state = ShiftClickState.HAS_NOT_CUT
-
-        self.scissors_icon = QgsVertexMarker(plugin.iface.mapCanvas())
-        self.scissors_icon.setIconType(QgsVertexMarker.ICON_X)
-        self.scissors_icon.setColor(get_complement(self.digitizingStrokeColor()))
-        self.scissors_icon.setIconSize(18)
-        self.scissors_icon.setPenWidth(5)
-        self.scissors_icon.setZValue(1000)
-
         # For snapping
         self.snapIndicator = QgsSnapIndicator(plugin.iface.mapCanvas())
         self.snapper = plugin.iface.mapCanvas().snappingUtils()
 
-        self.streamingToleranceInPixels = int(QSettings().value('qgis/digitizing/stream_tolerance', 2))
+        self.last_tree = None
+        self.last_graph = None
+        self.included_chunks = []
 
-    # This will only be called in QGIS is older than 3.32, hopefully.
-    def supportsTechnique(self, technique):
-        # we do not support shape or circular
-        return (technique in [
-            Qgis.CaptureTechnique.StraightSegments,
-            Qgis.CaptureTechnique.Streaming
-        ])
+        # QgsTasks that aren't kept around as objects can sometimes not run!
+        # so if we don't track them, we get issues
+        self.task_trash = []
 
-    # Wrap currentCaptureTechnique() because it was only added in 3.32.
-    def isStreamingCapture(self):
-        if hasattr(self, 'currentCaptureTechnique') and hasattr(Qgis, 'CaptureTechnique'):
-            if hasattr(Qgis.CaptureTechnique, 'Streaming'):
-                return self.currentCaptureTechnique() == Qgis.CaptureTechnique.Streaming
-        return False
+        # For showing chunks remaining, status, and instructions to the user.
+        self.is_message_bar_visible = False
+
+        # Declare properties
+        self.progressMessageBar = None
+        self.statusLabel = None
+        self.chunksRemainingPB = None
+
+    def handleMetadata(self, chunks_today, chunks_left_today, pricing_tier, fly_instance_id):
+        if fly_instance_id:
+            self.fly_instance_id = fly_instance_id
+
+        if self.is_message_bar_visible:
+            # Merely update the text
+            if pricing_tier != 'full-time' and chunks_today > chunks_left_today * 0.75:
+                self.chunksRemainingPB.setValue(chunks_today)
+                self.chunksRemainingPB.setMaximum(chunks_left_today)
+        else:
+            # Only show the progress bar if we're more than 75% into their quota,
+            # AND they're not on the full time tier (which is generous)
+            if pricing_tier != 'full-time' and chunks_today > chunks_left_today * 0.75:
+                self.progressMessageBar = self.plugin.iface.messageBar().createMessage("AI Vectorizer")
+                self.statusLabel = QLabel(f"Approaching today's chunk quota for current plan {pricing_tier}")
+                self.chunksRemainingPB = QProgressBar()
+                self.chunksRemainingPB.setValue(chunks_today)
+                self.chunksRemainingPB.setMaximum(chunks_left_today)
+                self.chunksRemainingPB.setFormat("%v / %m chunks")
+                self.chunksRemainingPB.setAlignment(Qt.AlignLeft|Qt.AlignVCenter)
+                self.progressMessageBar.layout().addWidget(self.statusLabel)
+                self.progressMessageBar.layout().addWidget(self.chunksRemainingPB)
+                self.plugin.iface.messageBar().pushWidget(self.progressMessageBar, Qgis.Info)
+
+                self.is_message_bar_visible = True
 
     def initRubberBand(self):
         if self.mode() == QgsMapToolCapture.CaptureLine:
@@ -144,118 +282,232 @@ class AIVectorizerTool(QgsMapToolCapture):
         widget.layout().addWidget(button)
         self.plugin.iface.messageBar().pushWidget(widget, msg_type, duration=15)
 
-    def handlePointReceived(self, args):
-        self.addVertex(QgsPointXY(*args[0]))
-        self.vertices.append(QgsPointXY(*args[0]))
+    def trimVerticesToPoint(self, vertices: List[QgsPointXY], pt: QgsPointXY) -> List[QgsPointXY]:
+        assert len(vertices) >= 2
 
-    def shiftClickAdjustment(self, pt, trimToPoint=False):
+        last_point, last_point_idx = find_closest_projection_point(vertices, pt)
+        points = vertices[:last_point_idx+1] + [last_point]
 
-        # Return the geometry prior
-        assert len(self.vertices) >= 2
-        last_point, last_point_idx = find_closest_projection_point(self.vertices, pt)
+        return points
 
-        # Geometry for polygon
-        points = self.vertices[:last_point_idx+1] + [ last_point, pt, self.vertices[0] ]
-        poly_geo = QgsGeometry.fromPolygonXY([points])
+    def indexToPoint(self, idx: int) -> QgsPointXY:
+        x_min, y_min, dxdy, y_max = self.last_tree.params
 
-        if trimToPoint:
-            numToTrim = len(self.vertices)-last_point_idx-1
-            for _ in range(numToTrim):
-                self.undo()
-            self.vertices = self.vertices[:-numToTrim]
-            # After trimming, add back our projected point
-            self.addVertex(last_point)
-            self.vertices.append(last_point)
+        (_, _, opt_points) = self.last_graph
+        if str(idx) not in opt_points:
+            img_height, img_width = self.last_tree.img_params
+            node = np.unravel_index(idx, (img_height, img_width))
+        else:
+            node = opt_points[str(idx)]# if idx in opt_points else node
 
-        return (last_point, poly_geo)
+        return QgsPointXY(node[1] * dxdy + x_min * 256 * dxdy, y_max * 256 * dxdy - node[0] * dxdy)
 
-    def isCutting(self, last_point):
-        # Returns whether or not we are in cutting mode or draw forwards mode.
-        # If this would cut to the end of the line, though, of course we would not
-        # cut there, as it's a no-op.
-        wouldCutToEnd = last_point.distance(self.vertices[-1]) < 1e-8
+    def solvePathToPoint(self, pt: QgsPointXY) -> List[QgsPointXY]:
+        if self.last_tree is None or len(self.vertices) == 0:
+            return None, None
 
-        return self.shift_state == ShiftClickState.HAS_NOT_CUT and not wouldCutToEnd
+        # (x_min, y_max, dxdy) = self.last_tree.params
+        (_, pts_paths, _) = self.last_graph
+
+        cur_tree = self.last_tree
+        # Bad trees
+        if len(cur_tree._graph_nodes_coords()) == 0:
+            return None, None
+
+        # Because we are clipping paths, we need to check the two closest nodes.
+        path = cur_tree.dijkstra(cur_tree.closest_nodes_to(pt, 2)[0])[0]
+        if len(path) == 0:
+            return None, None
+
+        # Replace bits of the path as possible
+        minimized_path = [path[0]]
+        for i in range(len(path)-1):
+            prev, next = path[i], path[i+1]
+
+            if f"{prev}_{next}" in pts_paths:
+                minimized_path.extend(pts_paths[f"{prev}_{next}"][1:])
+            elif f"{next}_{prev}" in pts_paths:
+                minimized_path.extend(reversed(pts_paths[f"{next}_{prev}"][:-1]))
+            else:
+                minimized_path.append(next)
+
+        # convert to coordinates
+        coordinates = [ self.indexToPoint(idx) for idx in minimized_path ]
+
+        # If snapping is enabled
+        if self.isAutoSnapEnabled():
+            # Snap only if the snapping result is not empty
+            snapped_points = [ self.snapper.snapToMap(coord) for coord in coordinates ]
+            coordinates = [ snapMatch.point() if not snapMatch.point().isEmpty() else coord for snapMatch, coord in zip(snapped_points, coordinates) ]
+
+        # Trim to the closest point to the cursor
+        if len(coordinates) > 2:
+            coordinates = self.trimVerticesToPoint(coordinates, pt)
+
+        # minimized_paths is [ QgsPointXY, ... ]
+        return coordinates, minimized_path[-1] if len(minimized_path) > 0 else path[0]
+
+    # This is cached and we manually reset it when we get a new feature.
+    @lru_cache(maxsize=1)
+    def calculateDxDy(self):
+        project_crs = QgsProject.instance().crs()
+        # By default, we zoom out 2.5x from the user's perspective.
+        proj_crs_units_per_screen_pixel = 2.5 * (self.plugin.iface.mapCanvas().extent().width() / self.plugin.iface.mapCanvas().width())
+
+        # We require the first two vertices to be drawn before we consider
+        # how large a chunk is.
+        if len(self.vertices) < 2:
+            raise ValueError
+
+        rlayers = find_raster_layers(QgsProject.instance().layerTreeRoot())
+        # Assuming self.rlayers is a list of QgsRasterLayer objects
+        # If the user drags in a raster layer without a CRS, default behavior is to give it "unknown"
+        # aka invalid CRS, which (to my knowledge) does not reproject and is equivalent to being in the same CRS.
+        intersecting_layers = [ rlayer for rlayer in rlayers if layerDoesIntersect(rlayer, project_crs, self.vertices[0]) ]
+
+        # ( units in project CRS ) / ( 1 raster layer's pixel ), independent of raster CRS based on Euclidean approximation
+        rupps = [ rasterUnitsPerPixelEstimate(r, project_crs, self.vertices[:2]) for r in intersecting_layers ]
+
+        # Use the resolution of the topmost raster layer
+        topmost_res_at_pt = rupps[0] if len(intersecting_layers) >= 1 else proj_crs_units_per_screen_pixel
+
+        # Rendering resolution in units per pixel
+        dx = max(proj_crs_units_per_screen_pixel, topmost_res_at_pt)
+
+        return dx
+
+    @lru_cache(maxsize=1)
+    def currentUuid(self):
+        return str(uuid.uuid4())
+
+    def suggestChunksToLoad(self, cursor_pt: QgsPointXY):
+        # Decide which chunks to load based on a set of chunks and relative
+        # priorities to eachother.
+        # Chunks with negative scores are musts, so these are never rate limited
+        # in terms of what to upload.
+        # The more positive a score, the less important it is.
+
+        priority_chunks = []
+        dxdy = self.calculateDxDy()
+
+        # Get all chunks under the drawn vertices
+        for pt in self.vertices:
+            priority_chunks.append(Chunk.pointToChunk(pt, dxdy))
+        # Current chunk under the cursor
+        priority_chunks.append(Chunk.pointToChunk(cursor_pt, dxdy))
+
+        # High priority chunks should not be slowed down by preloading
+        return list(set([c for c in priority_chunks if str(c) not in self.chunk_cache ]))
 
     def canvasMoveEvent(self, e):
         if self.isAutoSnapEnabled():
             snapMatch = self.snapper.snapToMap(e.pos())
             self.snapIndicator.setMatch(snapMatch)
 
-        if len(self.vertices) == 0:
-            # Nothing to do!
-            return
-
         if self.snapIndicator.match().type():
             pt = self.snapIndicator.match().point()
         else:
             pt = self.toMapCoordinates(e.pos())
 
-        # Support for streaming capture technique
-        if self.isStreamingCapture():
-            last_point = self.vertices[-1]
+        if len(self.vertices) == 0:
+            # Nothing to do!
+            return
 
-            if pt.distance(last_point) > self.streamingToleranceInPixels:
-                # We need to add the point, but we ask that the parent class do this
-                # because we don't have access to mAllowAddingStreamingPoints
-                super(AIVectorizerTool, self).canvasMoveEvent(e)
-                self.vertices.append(pt)
+        # Shift key means ignore autocomplete, or we force manual completion on first vertex
+        if e.modifiers() & Qt.ShiftModifier or len(self.vertices) == 1:
+            self.rb.setToGeometry(
+                QgsGeometry.fromPolylineXY([self.vertices[-1], pt]),
+                None
+            )
+            return
 
-        # Check if the shift key is being pressed
-        # We have special existing-line-editing mode when shift is hit
-        elif e.modifiers() & Qt.ShiftModifier and len(self.vertices) >= 2:
-            (last_point, poly_geo) = self.shiftClickAdjustment(pt)
+        dxdy = self.calculateDxDy()
+        # Highlight chunk
+        cur_chunk = Chunk.pointToChunk(pt, dxdy)
+        self.chunk_rb.setToGeometry(cur_chunk.toPolygon(), None)
+        self.updateFogOfWar()
 
-            if self.isCutting(last_point):
-                # Shift means our last vertex should effectively be the closest point to the line
-                self.scissors_icon.setCenter(last_point)
-                self.scissors_icon.show()
-
-                # Hide the rubber band
-                self.rb.reset()
-
-                return
-            else:
-                # We've already cut, so now we're drawing lines without autocomplete.
-                last_point = self.vertices[-1]
-                self.scissors_icon.hide()
-
-                # Use complement color
-                self.rb.setFillColor(get_complement(self.digitizingFillColor()))
-                self.rb.setStrokeColor(get_complement(self.digitizingStrokeColor()))
+        if str(cur_chunk) not in self.chunk_cache or self.chunk_cache[str(cur_chunk)] == False:
+            # Pink with more transparency = uploading or not in chunk cache
+            self.chunk_rb.setFillColor(QColor(255, 192, 203, 122))  # more transparent pink
         else:
-            last_point = self.vertices[-1]
+            # Totally transparent = uploaded and solved
+            self.chunk_rb.setFillColor(QColor(0, 0, 0, 0))  # completely transparent
 
-            self.scissors_icon.hide()
+        chunks_to_load = self.suggestChunksToLoad(pt)
+        # Only preload chunks on move if we're not currently uploading
+        # (chunk_cache[x] is False if we're uploading)
+        if len(chunks_to_load) > 0 and all(self.chunk_cache.values()):
+            root = QgsProject.instance().layerTreeRoot()
+            rlayers = find_raster_layers(root)
+            project_crs = QgsProject.instance().crs()
 
-            # Close it!
-            points = [ self.vertices[0], last_point, QgsPointXY(pt.x(), pt.y()), self.vertices[0]]
+            vlayer = self.plugin.iface.activeLayer()
+            if not isinstance(vlayer, QgsVectorLayer):
+                return
+            elif vlayer.wkbType() not in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString,
+                                        QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
+                return
 
-            poly_geo = QgsGeometry.fromPolygonXY([points])
-
-            self.rb.setFillColor(self.digitizingFillColor())
-            self.rb.setStrokeColor(self.digitizingStrokeColor())
-
-        # geometry depends on capture mode
-        if self.mode() == QgsMapToolCapture.CaptureLine or (len(self.vertices) < 2):
-            points = [last_point, pt]
-            self.rb.setToGeometry(
-                QgsGeometry.fromPolylineXY(points),
-                None
+            chunk_task = UploadChunkAndSolveTask(
+                self,
+                vlayer,
+                rlayers,
+                project_crs,
+                chunks=chunks_to_load,
+                should_solve=len(self.vertices) >= 1,
+                clear_chunk_cache=False
             )
-        elif self.mode() == QgsMapToolCapture.CapturePolygon:
-            self.rb.setToGeometry(
-                poly_geo,
-                None
-            )
+
+            for c in chunks_to_load:
+                self.chunk_cache[str(c)] = False
+
+            chunk_task.taskCompleted.connect(lambda: self.handleChunkUploaded([ str(c) for c in chunks_to_load ]))
+            chunk_task.taskTerminated.connect(lambda: self.handleChunkUploadFailed([ str(c) for c in chunks_to_load ]))
+            chunk_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
+            chunk_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
+            chunk_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
+
+            QgsApplication.taskManager().addTask(chunk_task)
+            self.task_trash.append(chunk_task)
+
+        # Last solve contains this chunk
+        elif self.last_tree is not None:
+            path_map_pts, _ = self.solvePathToPoint(pt)
+
+            # None = failed to navigate
+            if path_map_pts is not None:
+                self.rb.setToGeometry(
+                    QgsGeometry.fromPolylineXY(path_map_pts),
+                    None
+                )
+                return
+
+        # Draw from last vertex to this one
+        self.rb.setToGeometry(
+            QgsGeometry.fromPolylineXY([self.vertices[-1], pt]),
+            None
+        )
+
+    def updateFogOfWar(self):
+        if len(self.included_chunks) > 0:
+            self.fow_rb.setToGeometry(reduce(
+                lambda g1, g2: g1.combine(g2),
+                [ Chunk.strToChunk(chunk).toPolygon() for chunk in self.included_chunks ]
+            ), None)
+
+    def handleChunkUploaded(self, chunk_strs):
+        for chunk_str in chunk_strs:
+            self.chunk_cache[chunk_str] = True
+    def handleChunkUploadFailed(self, chunk_strs):
+        for chunk_str in chunk_strs:
+            if chunk_str in self.chunk_cache:
+                del self.chunk_cache[chunk_str]
 
     def canvasPressEvent(self, e):
         pass
 
     def canvasReleaseEvent(self, e):
-        # Either click will cancel an ongoing autocomplete
-        self.maybeCancelTask()
-
         vlayer = self.plugin.iface.activeLayer()
         if not isinstance(vlayer, QgsVectorLayer):
             self.plugin.iface.messageBar().pushMessage(
@@ -292,22 +544,9 @@ class AIVectorizerTool(QgsMapToolCapture):
                 raise ValueError
 
             vlayer.addFeature(f)
-            # Don't let vertices cross over
-            self.vertices = []
 
-            self.stopCapturing()
-            self.rb.reset()
-        elif e.button() == Qt.LeftButton and self.isStreamingCapture():
-            # Forces adding a vertex manually
-            if self.snapIndicator.match().type():
-                point = self.snapIndicator.match().point()
-            else:
-                point = self.toMapCoordinates(e.pos())
-
-            self.addVertex(point)
-            self.vertices.append(point)
-
-            self.startCapturing()
+            # Clean up the plugin between features
+            self.clearState()
         elif e.button() == Qt.LeftButton:
             # QgsPointXY with map CRS
             if self.snapIndicator.match().type():
@@ -315,65 +554,95 @@ class AIVectorizerTool(QgsMapToolCapture):
             else:
                 point = self.toMapCoordinates(e.pos())
 
-            if len(self.vertices) >= 2 and (e.modifiers() & Qt.ShiftModifier) and self.shift_state == ShiftClickState.HAS_NOT_CUT:
-                self.shiftClickAdjustment(point, trimToPoint=True)
-                # Only trim once, then we're completing
-                self.shift_state = ShiftClickState.HAS_CUT
-                return
+            # Solve beforehand, because if no path is found, it should be treated like
+            # a normal vectorizer
+            queued_points, newTrajectoryRoot = self.solvePathToPoint(point)
 
-            # Left clicking without shift resets us to normal autocomplete mode
-            if not (e.modifiers() & Qt.ShiftModifier):
-                self.shift_state = ShiftClickState.HAS_NOT_CUT
+            # Shift key ignores autocomplete and just adds a single vertex
+            if e.modifiers() & Qt.ShiftModifier or queued_points is None:
+                self.addVertex(point)
+                self.vertices.append(point)
+            else:
+                # Don't duplicate the first point
+                if len(queued_points) > 1 and self.vertices[-1].distance(queued_points[0]) < 1e-8:
+                    queued_points = queued_points[1:]
 
-            wasDoubleClick = len(self.vertices) >= 1 and point.distance(self.vertices[-1]) == 0
+                # No shift key, add autocompletions as expected
+                for completed_pt in queued_points:
+                    self.addVertex(completed_pt)
+                    self.vertices.append(completed_pt)
 
-            self.addVertex(point)
-            self.vertices.append(point)
+            # This allows the mouse hover to work until the new solve arrives
+            if self.last_tree is not None:
+                self.last_tree.trajectory_root = newTrajectoryRoot
 
             # This just sets the capturing property to true so we can
             # repeatedly call it
             self.startCapturing()
 
-            # Create our autocomplete task if we have >=2 vertices
-            if len(self.vertices) >= 2 and not (e.modifiers() & Qt.ShiftModifier) and not wasDoubleClick:
-                root = QgsProject.instance().layerTreeRoot()
-                rlayers = find_raster_layers(root)
-                project_crs = QgsProject.instance().crs()
+            if len(self.vertices) < 2:
+                # We don't propose any AI completions until the user has
+                # drawn the first line (two vertices).
+                return
 
-                self.autocomplete_task = AutocompleteTask(
-                    self,
-                    vlayer,
-                    rlayers,
-                    project_crs
-                )
+            # Shift key or not, we re-solve based on the newest point.
 
-                self.autocomplete_task.pointReceived.connect(lambda args: self.handlePointReceived(args))
-                self.autocomplete_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
+            # Because the tree is a DAG, we can always route from the last point.
+            # no need to delete
+            # However, we must re-solve because many pixels of the previous image
+            # are orphaned from the most recent vertex.
+            root = QgsProject.instance().layerTreeRoot()
+            rlayers = find_raster_layers(root)
+            project_crs = QgsProject.instance().crs()
+            vlayer = self.plugin.iface.activeLayer()
 
-                QgsApplication.taskManager().addTask(
-                    self.autocomplete_task,
-                )
+            should_clear_chunk_cache = len(self.vertices) == 2
+            if should_clear_chunk_cache:
+                self.chunk_cache = dict()
 
-    def maybeCancelTask(self):
-        # Cancels the task if it's running
-        if self.autocomplete_task is not None:
-            # QgsTasks passed to a task manager end up being owned
-            # in C++ land which leads us ... here.
-            try:
-                self.autocomplete_task.cancel()
-            except RuntimeError:
-                pass
-            finally:
-                self.autocomplete_task = None
+            # Upload this chunk if its the first
+            cur_chunk = Chunk.pointToChunk(point, self.calculateDxDy())
 
-            return True
-        else:
-            return False
+            solve_task = UploadChunkAndSolveTask(
+                self,
+                vlayer,
+                rlayers,
+                project_crs,
+                chunks=[cur_chunk] if str(cur_chunk) not in self.chunk_cache else [],
+                should_solve=True,
+                # we add the vertex above
+                clear_chunk_cache=should_clear_chunk_cache
+            )
+            if str(cur_chunk) not in self.chunk_cache:
+                self.chunk_cache[str(cur_chunk)] = False
+
+            solve_task.taskCompleted.connect(lambda: self.handleChunkUploaded([str(cur_chunk)]))
+            solve_task.taskTerminated.connect(lambda: self.handleChunkUploadFailed([str(cur_chunk)]))
+
+            solve_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
+            solve_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
+            solve_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
+
+            self.task_trash.append(solve_task)
+
+            QgsApplication.taskManager().addTask(solve_task)
+
+    def handleGraphConstructed(self, pts_cost, pts_paths, params, img_params, included_chunks, opt_points, trajectory_root, cur_uuid):
+        (x_min, y_min, dxdy, y_max) = params
+
+        # This prevents race conditions where a previously created tree gets stored as the current tree
+        # after we right click the feature.
+        if cur_uuid != self.currentUuid():
+            return
+
+        self.last_tree = TrajectoryTree(pts_cost, (x_min, y_min, dxdy, y_max), img_params, trajectory_root)
+        self.last_graph = (pts_cost, pts_paths, opt_points)
+        self.included_chunks = included_chunks
+
+        self.updateFogOfWar()
 
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key_Backspace, Qt.Key_Delete) and len(self.vertices) >= 2:
-            self.maybeCancelTask()
-
             if not e.isAutoRepeat():
                 self.undo()
                 self.vertices.pop()
@@ -381,10 +650,6 @@ class AIVectorizerTool(QgsMapToolCapture):
                 e.accept()
                 return
         elif e.key() == Qt.Key_Escape:
-            if self.maybeCancelTask():
-                # escape will just cancel the task if it existed
-                return
-
             self.stopCapturing()
             self.vertices = []
             self.rb.reset()
@@ -394,8 +659,30 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         e.ignore()
 
-    def deactivate(self):
+    def clearState(self):
         self.rb.reset()
+        self.chunk_rb.reset()
+        self.fow_rb.reset()
+        self.stopCapturing()
 
-        self.scissors_icon.hide()
+        # Delete current state
+        self.last_tree = None
+        self.last_graph = None
+        self.chunk_cache = dict()
+        self.fly_instance_id = None
+        self.vertices = []
+
+        # dxdy aka raster resolution
+        self.calculateDxDy.cache_clear()
+        # unique uuid for each feature
+        self.currentUuid.cache_clear()
+
+        # drop message
+        if self.is_message_bar_visible:
+            self.is_message_bar_visible = False
+            self.plugin.iface.messageBar().popWidget(self.progressMessageBar)
+
+    def deactivate(self):
+        self.clearState()
+
         self.plugin.action.setChecked(False)

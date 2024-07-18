@@ -1,4 +1,4 @@
-# Copyright 2023 Bunting Labs, Inc.
+# Copyright 2024 Bunting Labs, Inc.
 
 import os
 import string
@@ -22,7 +22,6 @@ from .onboarding_widget import OnboardingHeaderWidget
 # Settings for QGIS
 SETTING_API_TOKEN = "buntinglabs-qgis-plugin/api_key"
 SETTING_TOS = "buntinglabs-qgis-plugin/terms_of_service_state"
-SETTING_CONTEXT_WINDOW_SIZE = "buntinglabs-qgis-plugin/window_size_px"
 
 def generate_random_api_key():
     return ''.join(random.choice(string.ascii_uppercase + string.ascii_lowercase + string.digits) for _ in range(12))
@@ -57,6 +56,13 @@ class BuntingLabsPlugin:
             self.plugin_version = 'N/A'
 
         self.settings_action = None
+
+        # For progress bar, time in ms per number of chunks
+        self.expected_time = {
+            0: 500,
+            1: 1200,
+            2: 1900
+        }
 
     def update_checkable(self):
         # Before onboarding, it's always checkable.
@@ -182,7 +188,7 @@ class BuntingLabsPlugin:
         intro_text.setWordWrap(True)
         layout.addWidget(intro_text)
 
-        explain_text = QLabel("You will automatically be on our free tier, with access to 7,000 completions per month. No credit card is needed.")
+        explain_text = QLabel("You will automatically be on our free tier, with access to 600 processed map chunks per month. No credit card is needed.")
         explain_text.setWordWrap(True)
         layout.addWidget(explain_text)
 
@@ -375,11 +381,14 @@ class BuntingLabsPlugin:
 
         left_layout.addWidget(QLabel("<b>You're in! Here's how you can start using the plugin:</b>"))
         left_layout.addWidget(QLabel("1. Load a raster layer to digitize"))
-        left_layout.addWidget(QLabel("2. Create a new Shapefile layer"))
+        left_layout.addWidget(QLabel("2. Create a new vector layer (e.g. Shapefile)"))
         left_layout.addWidget(QLabel("3. Toggle editing mode"))
         left_layout.addWidget(QLabel("4. Click the AI Vectorizer icon"))
-        left_layout.addWidget(QLabel("5. Start tracing the feature you want to digitize"))
-        left_layout.addWidget(QLabel("6. Hold down <code>shift</code> to cut AI generated lines and create manual completions"))
+        left_layout.addWidget(QLabel("5. Click two vertices along the feature you want to digitize"))
+        left_layout.addWidget(QLabel("6. Move your mouse forwards along the feature to extend the AI tracing forward and load more chunks of the map"))
+        left_layout.addWidget(QLabel("7. Left click to accept the AI progress and autocomplete again from that point"))
+        left_layout.addWidget(QLabel("8. Hold down <code>shift</code> to manually add vertices"))
+        left_layout.addWidget(QLabel("9. Right click to save the feature to your vector layer"))
 
         gif_label = QLabel()
         gif_movie = QMovie(os.path.join(os.path.dirname(__file__), 'assets', 'instructions.gif'))
@@ -437,30 +446,6 @@ class BuntingLabsPlugin:
         layout.addWidget(self.api_key_input)
         layout.addWidget(sublabel)
 
-        context_window_label = QLabel("<b>Context Window Size</b>")
-        layout.addWidget(context_window_label)
-
-        context_window_description = QLabel("Get longer completions at the cost of longer load time by increasing the amount of map sent to our servers.")
-        context_window_description.setWordWrap(True)
-        layout.addWidget(context_window_description)
-
-        context_window_group = QButtonGroup(self.api_key_dialog)
-
-        small_window_option = QRadioButton("1200x1200 pixels")
-        context_window_group.addButton(small_window_option)
-        layout.addWidget(small_window_option)
-
-        large_window_option = QRadioButton("2500x2500 pixels")
-        context_window_group.addButton(large_window_option)
-        layout.addWidget(large_window_option)
-
-        if self.settings.value(SETTING_CONTEXT_WINDOW_SIZE, "1200") == "2500":
-            large_window_option.setChecked(True)
-        else:
-            small_window_option.setChecked(True)
-
-        context_window_group.buttonClicked.connect(lambda btn: self.settings.setValue(SETTING_CONTEXT_WINDOW_SIZE, "2500" if btn.text() == "2500x2500 pixels" else "1200"))
-
         save_button = QPushButton("Save")
         save_button.clicked.connect(self.saveSettings)
         layout.addWidget(save_button)
@@ -486,6 +471,8 @@ class BuntingLabsPlugin:
             self.iface.removePluginMenu('Bunting Labs', self.settings_action)
 
         self.iface.removeToolBarIcon(self.action)
+
+        self.tracer.deactivate()
 
     def toolbarClick(self):
         if self.action.isChecked():

@@ -1,18 +1,19 @@
-# Copyright 2023 Bunting Labs, Inc.
+# Copyright 2024 Bunting Labs, Inc.
 
 import os
-import http.client
 import json
 from osgeo import gdal, osr
 import numpy as np
-import ssl
+import random
+import time
+import gzip
 import math
 
 from qgis.core import QgsTask, QgsMapSettings, QgsMapRendererCustomPainterJob, \
-    QgsCoordinateTransform, QgsProject, QgsRectangle, Qgis
-from qgis.gui import QgsMapToolCapture
+    QgsCoordinateTransform, QgsProject, QgsNetworkAccessManager, Qgis
 from qgis.PyQt.QtGui import QImage, QPainter, QColor
-from qgis.PyQt.QtCore import QSize, pyqtSignal
+from qgis.PyQt.QtCore import QSize, pyqtSignal, QUrl, QEventLoop, QTimer
+from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 def rasterUnitsPerPixelEstimate(rlayer, project_crs, vertices):
     # vertices are in project_crs
@@ -43,17 +44,20 @@ def layerDoesIntersect(rlayer, project_crs, vertex):
     transformed_vertex = transform.transform(vertex)
     return rlayer.extent().contains(transformed_vertex)
 
-class AutocompleteTask(QgsTask):
-    # This task can run in the background of QGIS, streaming results
-    # back from the inference server.
+class UploadChunkAndSolveTask(QgsTask):
+    # This task can run in the background of QGIS
 
-    pointReceived = pyqtSignal(tuple)
     # Tuple for (error message, Qgis.Critical, error link or None, error button text or None)
     messageReceived = pyqtSignal(tuple)
 
-    def __init__(self, tracing_tool, vlayer, rlayers, project_crs):
+    graphConstructed = pyqtSignal(tuple)
+    metadataReceived = pyqtSignal(tuple) # (chunks_today, chunks_left, pricing_tier, fly_instance_id)
+
+    def __init__(self, tracing_tool, vlayer, rlayers, project_crs,
+                 chunks=[],
+                 should_solve=False, clear_chunk_cache=False):
         super().__init__(
-            'Bunting Labs AI Vectorizer background task for ML inference',
+            'AI Vectorizer processing map chunks on server' if should_solve else 'AI Vectorizer preloading map chunks',
             QgsTask.CanCancel
         )
 
@@ -62,159 +66,153 @@ class AutocompleteTask(QgsTask):
         self.rlayers = rlayers
         self.project_crs = project_crs
 
+        self.chunks = chunks
+        self.should_solve = should_solve
+        self.clear_chunk_cache = clear_chunk_cache
+
+        # Store and return later
+        self.cur_uuid = self.tracing_tool.currentUuid()
+
+        # For progress bar
+        self.start_time = time.time()
+        ETs = self.tracing_tool.plugin.expected_time
+        self.expected_time = ETs[len(chunks)] if len(chunks) in ETs else 3000
+
     def run(self):
-        # By default, we zoom out 2.5x from the user's perspective.
-        proj_crs_units_per_screen_pixel = 2.5 * (self.tracing_tool.plugin.iface.mapCanvas().extent().width() / self.tracing_tool.plugin.iface.mapCanvas().width())
+        self.setProgress(0.0)
 
         # The resolution of a raster layer is defined as the ground distance covered by one pixel
         # of the raster. Therefore, a smaller resolution value means a higher resolution raster.
         mapEpsgCode = self.project_crs.postgisSrid()
 
-        # Assuming self.rlayers is a list of QgsRasterLayer objects
-        # If the user drags in a raster layer without a CRS, default behavior is to give it "unknown"
-        # aka invalid CRS, which (to my knowledge) does not reproject and is equivalent to being in the same CRS.
-        intersecting_layers = [ rlayer for rlayer in self.rlayers if layerDoesIntersect(rlayer, self.project_crs, self.tracing_tool.vertices[-1]) ]
-
-        # ( units in project CRS ) / ( 1 raster layer's pixel ), independent of raster CRS based on Euclidean approximation
-        rupps = [ rasterUnitsPerPixelEstimate(r, self.project_crs, self.tracing_tool.vertices[-2:]) for r in intersecting_layers ]
-
-        # Use the resolution of the topmost raster layer
-        topmost_res_at_pt = rupps[0] if len(intersecting_layers) >= 1 else proj_crs_units_per_screen_pixel
-
-        dx = max(proj_crs_units_per_screen_pixel, topmost_res_at_pt)
-        dy = dx
-
-        if len(self.rlayers) == 0:
-            self.messageReceived.emit((
-                'No raster layers are loaded. Load a GeoTIFF to use autocomplete.',
-                Qgis.Critical, None, None
-            ))
-            return False
-
-        # First, if they clicked outside of all raster layers, warn them.
-        if len(intersecting_layers) == 0:
-            self.messageReceived.emit((
-                'No raster layers found beneath your autocomplete tool',
-                Qgis.Warning, None, None
-            ))
-
-        # Size of the rectangle in the CRS coordinates
-        window_size = self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/window_size_px", "1200")
-        assert window_size in ["1200", "2500"] # Two allowed sizes
-
-        img_width, img_height = int(window_size), int(window_size)
-        x_size = img_width * dx
-        y_size = img_height * dy
-
-        if x_size <= 0 or y_size <= 0:
-            self.messageReceived.emit((
-                'Could not render an image from the rasters (this is a plugin bug!).',
-                Qgis.Critical,
-                'https://github.com/BuntingLabs/buntinglabs-qgis-plugin/issues/new',
-                'Report Bug'
-            ))
-            return False
-
-        # i = y, j = x
-        # note that negative i (or y) is up
-        x0, y0 = self.tracing_tool.vertices[-2]
-        x1, y1 = self.tracing_tool.vertices[-1]
-        cx, cy = (x0+x1)/2, (y0+y1)/2
-
-        x_min = cx - x_size / 2
-        x_max = cx + x_size / 2
-        y_min = cy - y_size / 2
-        y_max = cy + y_size / 2
-
-        # create image
-        # Format_RGB888 is 24-bit (8 bits each) for each color channel, unlike
-        # Format_RGB32 which by default has 0xff on the alpha channel, and screws
-        # up reading it into GDAL!
-        img = QImage(QSize(img_width, img_height), QImage.Format_RGB888)
-
-        # white is most canonically background
-        color = QColor(255, 255, 255)
-        img.fill(color.rgb())
-
         mapSettings = QgsMapSettings()
-
         mapSettings.setDestinationCrs(self.project_crs)
         mapSettings.setLayers(self.rlayers)
 
-        rect = QgsRectangle(x_min, y_min, x_max, y_max)
-        mapSettings.setExtent(rect)
-        mapSettings.setOutputSize(img.size())
+        rendered_chunks = []
+        for chunk in self.chunks:
 
-        p = QPainter()
-        p.begin(img)
-        p.setRenderHint(QPainter.Antialiasing)
+            # create image
+            # Format_RGB888 is 24-bit (8 bits each) for each color channel, unlike
+            # Format_RGB32 which by default has 0xff on the alpha channel, and screws
+            # up reading it into GDAL!
+            img = QImage(QSize(chunk.CONST_CHUNK_SIZE, chunk.CONST_CHUNK_SIZE), QImage.Format_RGB888)
 
-        render = QgsMapRendererCustomPainterJob(mapSettings, p)
-        render.start()
-        render.waitForFinished()
-        p.end()
+            # white is most canonically background
+            color = QColor(255, 255, 255)
+            img.fill(color.rgb())
 
-        try:
-            # Convert QImage to np.array
-            ptr = img.bits()
-            ptr.setsize(img.height() * img.width() * 3)
-            img_np = np.frombuffer(ptr, np.uint8).reshape((img.height(), img.width(), 3))
+            rect = chunk.toRectangle()
+            mapSettings.setExtent(rect)
+            mapSettings.setOutputSize(img.size())
 
-            # Call the function to convert the image to a geotiff tif and save it as bytes
-            tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_max, x_max, y_min)
+            p = QPainter()
+            p.begin(img)
+            p.setRenderHint(QPainter.Antialiasing)
 
-        except Exception as e:
-            self.messageReceived.emit((str(e), Qgis.Critical, None, None))
-            return False
+            render = QgsMapRendererCustomPainterJob(mapSettings, p)
+            render.start()
+            render.waitForFinished()
+            p.end()
 
-        # Get all coordinates
-        preceding_coordinates = [ [-(y - y_max)/dy, (x - x_min)/dx] for (x, y) in self.tracing_tool.vertices ]
-        vector_payload = json.dumps({
-            'coordinates': preceding_coordinates
-        })
+            try:
+                # Convert QImage to np.array
+                ptr = img.bits()
+                ptr.setsize(img.height() * img.width() * 3)
+                img_np = np.frombuffer(ptr, np.uint8).reshape((img.height(), img.width(), 3))
 
-        options_payload = json.dumps({
-            'num_completions': self.tracing_tool.num_completions,
-            'qgis_version': Qgis.QGIS_VERSION,
-            'plugin_version': self.tracing_tool.plugin.plugin_version,
-            'proj_epsg': mapEpsgCode,
-            'is_polygon': self.tracing_tool.mode() == QgsMapToolCapture.CapturePolygon
-        })
+                # Call the function to convert the image to a geotiff tif and save it as bytes
+                rect = chunk.toRectangle()
+                x_min, y_min, x_max, y_max = rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum()
+
+                tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_min, x_max, y_max)
+                rendered_chunks.append(tif_data)
+
+            except Exception as e:
+                self.messageReceived.emit((str(e), Qgis.Critical, None, None))
+                return False
 
         boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'
-        body = (
-            '--' + boundary,
-            'Content-Disposition: form-data; name="image"; filename="rendered.tif"',
-            'Content-Type: application/octet-stream',
-            '',
-            tif_data,
-            '--' + boundary,
-            'Content-Disposition: form-data; name="vector"; filename="vector.json"',
-            'Content-Type: application/json',
-            '',
-            vector_payload,
-            '--' + boundary,
-            'Content-Disposition: form-data; name="options"; filename="options.json"',
-            'Content-Type: application/json',
-            '',
-            options_payload,
-            '--' + boundary + '--',
-            ''
-        )
+        # Build the solve body if requested
+        body = []
+        if self.should_solve:
+            # Get all coordinates
+            vector_payload = json.dumps({
+                'coordinates': [ [y, x] for (x, y) in self.tracing_tool.vertices ]
+            })
+
+            body.extend([
+                '--' + boundary,
+                'Content-Disposition: form-data; name="solve_vector"; filename="vector.json"',
+                'Content-Type: application/json',
+                '',
+                vector_payload,
+                '--' + boundary + '--' if len(rendered_chunks) == 0 else ''
+            ])
+
+        for i, tif_data in enumerate(rendered_chunks):
+            body.extend((
+                '--' + boundary,
+                'Content-Disposition: form-data; name="%s"; filename="rendered.tif"' % str(self.chunks[i]),
+                'Content-Type: application/octet-stream',
+                '',
+                tif_data,
+                '--' + boundary + '--' if i == len(rendered_chunks) - 1 else ''
+            ))
+
         body = b'\r\n'.join([part.encode() if isinstance(part, str) else part for part in body])
 
         headers = {
             'Content-Type': 'multipart/form-data; boundary=' + boundary,
-            'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo")
+            'Accept-Encoding': 'gzip',
+            'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo"),
+            'x-clear-chunk-cache': str(self.clear_chunk_cache).lower(),
+            'x-qgis-version': Qgis.QGIS_VERSION,
+            'x-plugin-version': self.tracing_tool.plugin.plugin_version,
+            'x-cur-vertices': str(len(self.tracing_tool.vertices))
         }
+        if self.tracing_tool.fly_instance_id:
+            headers['fly-force-instance-id'] = self.tracing_tool.fly_instance_id
+
+        self.setProgress(10.0)
 
         try:
-            conn = http.client.HTTPSConnection("qgis-api.buntinglabs.com")
-            conn.request("POST", "/v1", body, headers)
-            res = conn.getresponse()
-            if res.status != 200:
-                error_payload = res.read().decode('utf-8')
+            url = QUrl("https://qgis-api.buntinglabs.com/chunk/v2")
+            request = QNetworkRequest(url)
+            for key, value in headers.items():
+                request.setRawHeader(key.encode(), value.encode())
 
+            nam = QgsNetworkAccessManager.instance()
+            reply = nam.post(request, body)
+
+            # Use an additional timer to update the progress of the
+            # progress bar for this task.
+            pb_timer = QTimer()
+            pb_timer.setInterval(200) # don't do it too often
+            def update_progress():
+                elapsed_time = time.time() - self.start_time
+                expected_duration = self.expected_time / 1000  # Convert ms to seconds
+                # Some foo-y math to make the progress bar look like it's filling up
+                progress = min(80.0, 10.0 + 70.0 * (elapsed_time / expected_duration))
+                if elapsed_time > expected_duration:
+                    remaining = 100.0 - progress
+                    progress += remaining * (1 - math.exp(-0.5 * (elapsed_time - expected_duration)))
+                self.setProgress(progress)
+            pb_timer.timeout.connect(update_progress)
+            pb_timer.start()
+
+            loop = QEventLoop()
+            reply.finished.connect(loop.quit)
+            loop.exec_()
+
+            pb_timer.stop()
+
+            if reply.error() != QNetworkReply.NoError:
+                error_payload = reply.readAll().data()
+                if reply.rawHeader(b'Content-Encoding') == b'gzip':
+                    error_payload = gzip.decompress(error_payload).decode('utf-8')
+                else:
+                    error_payload = error_payload.decode('utf-8')
                 try:
                     error_details = json.loads(error_payload)
                     self.messageReceived.emit((
@@ -225,44 +223,37 @@ class AutocompleteTask(QgsTask):
                     ))
                 except json.JSONDecodeError:
                     self.messageReceived.emit((error_payload, Qgis.Critical, None, None))
-
                 return False
-        except BrokenPipeError:
-            self.messageReceived.emit(('Autocomplete server connection was interrupted (BrokenPipeError)', Qgis.Critical, None, None))
-            return False
-        except ssl.SSLCertVerificationError:
-            self.messageReceived.emit(('Autocomplete server failed SSL Certificate Verification', Qgis.Critical, None, None))
-            return False
+
+            self.setProgress(80.0)
+
+            if self.should_solve:
+                content = reply.readAll().data()
+                if reply.rawHeader(b'Content-Encoding') == b'gzip':
+                    buffer = gzip.decompress(content).decode('utf-8')
+                else:
+                    buffer = content.decode('utf-8')
+
+                data = json.loads(buffer)
+
+                pts_cost = data['costs']
+                pts_paths = data['paths']
+                x_min, y_min, dxdy = data['x_min'], data['y_min'], data['dxdy']
+                y_max = data['y_max']
+                img_height, img_width = data['img_height'], data['img_width']
+                opt_points = data['opt_points']
+
+                self.graphConstructed.emit((pts_cost, pts_paths, (x_min, y_min, dxdy, y_max), (img_height, img_width), data['included_chunks'], opt_points, data['trajectory_root'], self.cur_uuid))
+                self.metadataReceived.emit((data['chunks_today'], data['chunks_left_today'], data['pricing_tier'], data['fly_instance_id'] if 'fly_instance_id' in data else None))
+
         except Exception as e:
             self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None))
             return False
 
-        buffer = ""
-        while True:
-            # For some reason, read errors with IncompleteRead?
-            try:
-                chunk = res.read(16)
-                if not chunk:
-                    break
-
-                buffer += chunk.decode('utf-8')
-            except http.client.IncompleteRead as e:
-                buffer += e.partial.decode('utf-8')
-
-            while '\n' in buffer:
-                if self.isCanceled():
-                    return False
-
-                line, buffer = buffer.split('\n', 1)
-                new_point = json.loads(line)
-
-                ix, jx = new_point[0], new_point[1]
-
-                # convert to xy
-                xn = (jx * dx) + x_min
-                yn = y_max - (ix * dy)
-
-                self.pointReceived.emit(((xn, yn), 1.0))
+        # Update expected time
+        ETs = self.tracing_tool.plugin.expected_time
+        if len(self.chunks) in ETs:
+            ETs[len(self.chunks)] = 0.8 * ETs[len(self.chunks)] + 0.2 * (time.time() - self.start_time)*1000
 
         return True
 
@@ -272,13 +263,16 @@ class AutocompleteTask(QgsTask):
     def cancel(self):
         super().cancel()
 
-
 def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
     # Open the PNG file
     (rasterYSize, rasterXSize, rasterCount) = img_np.shape
 
+    # Surely this will prevent collisions
+    random_hex = ''.join([random.choice('0123456789abcdef') for _ in range(16)])
+    vsimem_path = f'/vsimem/bunting_qgis_tracer_{random_hex}.tif'
+
     # Create a new GeoTIFF file in memory
-    dst = gdal.GetDriverByName('GTiff').Create('/vsimem/bunting_qgis_tracer.tif', rasterXSize, rasterYSize, rasterCount,
+    dst = gdal.GetDriverByName('GTiff').Create(vsimem_path, rasterXSize, rasterYSize, rasterCount,
                                                gdal.GDT_Byte, options=["COMPRESS=JPEG", "JPEG_QUALITY=85"])
 
     # Set the geotransform
@@ -299,7 +293,7 @@ def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
     dst = None
 
     # Return the GeoTIFF-encoded memory contents as a byte array
-    f = gdal.VSIFOpenL('/vsimem/bunting_qgis_tracer.tif', 'rb')
+    f = gdal.VSIFOpenL(vsimem_path, 'rb')
     # Because we use the same /vsimem/ URI for each query, double clicking quickly
     # can result in a race condition in georeference_img_to_tiff where it gets .Unlink()'ed
     # before the above open call. This means we get a null pointer here. TODO solve
@@ -314,6 +308,6 @@ def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
     gdal.VSIFCloseL(f)
 
     # Delete the temporary file
-    gdal.Unlink('/vsimem/bunting_qgis_tracer.tif')
+    gdal.Unlink(vsimem_path)
 
     return data
