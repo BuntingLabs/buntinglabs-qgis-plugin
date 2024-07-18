@@ -85,7 +85,7 @@ class UploadChunkAndSolveTask(QgsTask):
 
         # The resolution of a raster layer is defined as the ground distance covered by one pixel
         # of the raster. Therefore, a smaller resolution value means a higher resolution raster.
-        mapEpsgCode = self.project_crs.postgisSrid()
+        mapCrsWkt = self.project_crs.toWkt()
 
         mapSettings = QgsMapSettings()
         mapSettings.setDestinationCrs(self.project_crs)
@@ -127,7 +127,7 @@ class UploadChunkAndSolveTask(QgsTask):
                 rect = chunk.toRectangle()
                 x_min, y_min, x_max, y_max = rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum()
 
-                tif_data = georeference_img_to_tiff(img_np, mapEpsgCode, x_min, y_min, x_max, y_max)
+                tif_data = georeference_img_to_tiff(img_np, mapCrsWkt, x_min, y_min, x_max, y_max)
                 rendered_chunks.append(tif_data)
 
             except Exception as e:
@@ -272,7 +272,7 @@ class UploadChunkAndSolveTask(QgsTask):
     def cancel(self):
         super().cancel()
 
-def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
+def georeference_img_to_tiff(img_np, crs_wkt, x_min, y_min, x_max, y_max):
     # Open the PNG file
     (rasterYSize, rasterXSize, rasterCount) = img_np.shape
 
@@ -290,7 +290,7 @@ def georeference_img_to_tiff(img_np, epsg, x_min, y_min, x_max, y_max):
 
     # Set the projection
     srs = osr.SpatialReference()
-    srs.ImportFromEPSG(epsg)
+    srs.ImportFromWkt(crs_wkt)
     dst.SetProjection(srs.ExportToWkt())
 
     # Write the array data to the raster bands
