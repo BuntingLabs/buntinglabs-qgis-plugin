@@ -648,6 +648,32 @@ class AIVectorizerTool(QgsMapToolCapture):
                 self.vertices.pop()
 
                 e.accept()
+
+                # Deleting should re-solve the trajectory tree
+                root = QgsProject.instance().layerTreeRoot()
+                rlayers = find_raster_layers(root)
+                project_crs = QgsProject.instance().crs()
+                vlayer = self.plugin.iface.activeLayer()
+
+                # Assume we don't need to re-upload any chunks
+                solve_task = UploadChunkAndSolveTask(
+                    self,
+                    vlayer,
+                    rlayers,
+                    project_crs,
+                    chunks=[],
+                    should_solve=True,
+                    # we add the vertex above
+                    clear_chunk_cache=False
+                )
+
+                solve_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
+                solve_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
+                solve_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
+
+                self.task_trash.append(solve_task)
+
+                QgsApplication.taskManager().addTask(solve_task)
                 return
         elif e.key() == Qt.Key_Escape:
             self.stopCapturing()
