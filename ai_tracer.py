@@ -552,46 +552,13 @@ class AIVectorizerTool(QgsMapToolCapture):
                 return
 
             # Shift key or not, we re-solve based on the newest point.
-
             # Because the tree is a DAG, we can always route from the last point.
-            # no need to delete
             # However, we must re-solve because many pixels of the previous image
             # are orphaned from the most recent vertex.
-            root = QgsProject.instance().layerTreeRoot()
-            rlayers = find_raster_layers(root)
-            project_crs = QgsProject.instance().crs()
-            vlayer = self.plugin.iface.activeLayer()
 
             should_clear_chunk_cache = len(self.vertices) == 2
-            if should_clear_chunk_cache:
-                self.chunk_cache = dict()
 
-            # Upload this chunk if its the first
-            cur_chunk = Chunk.pointToChunk(point, self.calculateDxDy())
-
-            solve_task = UploadChunkAndSolveTask(
-                self,
-                vlayer,
-                rlayers,
-                project_crs,
-                chunks=[cur_chunk] if str(cur_chunk) not in self.chunk_cache else [],
-                should_solve=True,
-                # we add the vertex above
-                clear_chunk_cache=should_clear_chunk_cache
-            )
-            if str(cur_chunk) not in self.chunk_cache:
-                self.chunk_cache[str(cur_chunk)] = False
-
-            solve_task.taskCompleted.connect(lambda: self.handleChunkUploaded([str(cur_chunk)]))
-            solve_task.taskTerminated.connect(lambda: self.handleChunkUploadFailed([str(cur_chunk)]))
-
-            solve_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
-            solve_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
-            solve_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
-
-            self.task_trash.append(solve_task)
-
-            QgsApplication.taskManager().addTask(solve_task)
+            self.maybeNewSolve(hover_point=point, clear_chunk_cache=should_clear_chunk_cache)
 
     def handleGraphConstructed(self, pts_cost, pts_paths, params, img_params, included_chunks, opt_points, trajectory_root, cur_uuid):
         (x_min, y_min, dxdy, y_max) = params
@@ -631,7 +598,11 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     # Determines if we need a new upload + solve task. Returns True if that task was fired,
     # or False if the current tree likely works, or otherwise cannot solve.
-    def maybeNewSolve(self, hover_point):
+    def maybeNewSolve(self, hover_point, clear_chunk_cache=False):
+        # Clear chunk cache first
+        if clear_chunk_cache:
+            self.chunk_cache = dict()
+
         chunks_to_load = self.suggestChunksToLoad(hover_point)
 
         # Only preload chunks on move if we're not currently uploading
@@ -668,7 +639,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             project_crs,
             chunks=chunks_to_load,
             should_solve=len(self.vertices) >= 1,
-            clear_chunk_cache=False
+            clear_chunk_cache=clear_chunk_cache
         )
 
         for c in chunks_to_load:
