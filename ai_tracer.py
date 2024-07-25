@@ -571,6 +571,13 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.last_graph = (pts_cost, pts_paths, opt_points)
         self.included_chunks = included_chunks
 
+        # If the server communicates to us that a chunk we've previously uploaded (chunk_cache[key] == True)
+        # is now included in its newest computation, then we should invalidate it from the chunk cache.
+        previously_uploaded_chunks = list(self.chunk_cache.keys())
+        for prev_uploaded in previously_uploaded_chunks:
+            if self.chunk_cache[prev_uploaded] == True and prev_uploaded not in self.included_chunks:
+                del self.chunk_cache[prev_uploaded]
+
         self.updateFogOfWar()
 
     def keyPressEvent(self, e):
