@@ -616,30 +616,8 @@ class AIVectorizerTool(QgsMapToolCapture):
                 e.accept()
 
                 # Deleting should re-solve the trajectory tree
-                root = QgsProject.instance().layerTreeRoot()
-                rlayers = find_raster_layers(root)
-                project_crs = QgsProject.instance().crs()
-                vlayer = self.plugin.iface.activeLayer()
-
-                # Assume we don't need to re-upload any chunks
-                solve_task = UploadChunkAndSolveTask(
-                    self,
-                    vlayer,
-                    rlayers,
-                    project_crs,
-                    chunks=[],
-                    should_solve=True,
-                    # we add the vertex above
-                    clear_chunk_cache=False
-                )
-
-                solve_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
-                solve_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
-                solve_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
-
-                self.task_trash.append(solve_task)
-
-                QgsApplication.taskManager().addTask(solve_task)
+                if len(self.vertices) >= 2:
+                    self.maybeNewSolve(hover_point=self.vertices[-1])
                 return
         elif e.key() == Qt.Key_Escape:
             self.stopCapturing()
@@ -658,10 +636,17 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # Only preload chunks on move if we're not currently uploading
         # (chunk_cache[x] is False if we're uploading)
-        # hence,
-        # Either condition means we don't need to solve
-        if len(chunks_to_load) == 0 or not all(self.chunk_cache.values()):
+        if not all(self.chunk_cache.values()):
             return False
+
+        # We need a new solve if there's more chunks or the
+        # root has changed since our last solve.
+        if self.last_tree is not None:
+            root, dxdy = self.last_tree.trajectory_root, self.last_tree.params[2]
+            # Hoping dxdy * 1e-2 acts as epsilon-small in coordinate system, where if the root distance
+            # to the past point is small, then the last tree is still a valid solve.
+            if len(chunks_to_load) == 0 and self.indexToPoint(root).distance(self.vertices[-1]) < dxdy*1e-2:
+                return False
 
         root = QgsProject.instance().layerTreeRoot()
         rlayers = find_raster_layers(root)
