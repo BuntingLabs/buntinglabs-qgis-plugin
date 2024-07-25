@@ -391,8 +391,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         dxdy = self.calculateDxDy()
 
         # Get all chunks under the drawn vertices
-        for pt in self.vertices:
-            priority_chunks.append(Chunk.pointToChunk(pt, dxdy))
+        priority_chunks.append(Chunk.pointToChunk(self.vertices[-1], dxdy))
         # Current chunk under the cursor
         priority_chunks.append(Chunk.pointToChunk(cursor_pt, dxdy))
 
