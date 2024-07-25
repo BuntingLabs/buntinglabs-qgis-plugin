@@ -434,42 +434,8 @@ class AIVectorizerTool(QgsMapToolCapture):
             # Totally transparent = uploaded and solved
             self.chunk_rb.setFillColor(QColor(0, 0, 0, 0))  # completely transparent
 
-        chunks_to_load = self.suggestChunksToLoad(pt)
-        # Only preload chunks on move if we're not currently uploading
-        # (chunk_cache[x] is False if we're uploading)
-        if len(chunks_to_load) > 0 and all(self.chunk_cache.values()):
-            root = QgsProject.instance().layerTreeRoot()
-            rlayers = find_raster_layers(root)
-            project_crs = QgsProject.instance().crs()
-
-            vlayer = self.plugin.iface.activeLayer()
-            if not isinstance(vlayer, QgsVectorLayer):
-                return
-            elif vlayer.wkbType() not in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString,
-                                        QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
-                return
-
-            chunk_task = UploadChunkAndSolveTask(
-                self,
-                vlayer,
-                rlayers,
-                project_crs,
-                chunks=chunks_to_load,
-                should_solve=len(self.vertices) >= 1,
-                clear_chunk_cache=False
-            )
-
-            for c in chunks_to_load:
-                self.chunk_cache[str(c)] = False
-
-            chunk_task.taskCompleted.connect(lambda: self.handleChunkUploaded([ str(c) for c in chunks_to_load ]))
-            chunk_task.taskTerminated.connect(lambda: self.handleChunkUploadFailed([ str(c) for c in chunks_to_load ]))
-            chunk_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
-            chunk_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
-            chunk_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
-
-            QgsApplication.taskManager().addTask(chunk_task)
-            self.task_trash.append(chunk_task)
+        if self.maybeNewSolve(hover_point=pt):
+            return
 
         # Last solve contains this chunk
         elif self.last_tree is not None:
@@ -684,6 +650,53 @@ class AIVectorizerTool(QgsMapToolCapture):
             return
 
         e.ignore()
+
+    # Determines if we need a new upload + solve task. Returns True if that task was fired,
+    # or False if the current tree likely works, or otherwise cannot solve.
+    def maybeNewSolve(self, hover_point):
+        chunks_to_load = self.suggestChunksToLoad(hover_point)
+
+        # Only preload chunks on move if we're not currently uploading
+        # (chunk_cache[x] is False if we're uploading)
+        # hence,
+        # Either condition means we don't need to solve
+        if len(chunks_to_load) == 0 or not all(self.chunk_cache.values()):
+            return False
+
+        root = QgsProject.instance().layerTreeRoot()
+        rlayers = find_raster_layers(root)
+        project_crs = QgsProject.instance().crs()
+
+        vlayer = self.plugin.iface.activeLayer()
+        if not isinstance(vlayer, QgsVectorLayer):
+            self.notifyUserOfMessage("The active layer is not a vector layer.", Qgis.Warning, None, None, 10)
+            return False
+        elif vlayer.wkbType() not in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString,
+                                    QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
+            self.notifyUserOfMessage("The active layer's geometry type is not compatible with this plugin. Please use LineString, MultiLineString, Polygon, or MultiPolygon.", Qgis.Warning, None, None, 10)
+            return False
+
+        chunk_task = UploadChunkAndSolveTask(
+            self,
+            vlayer,
+            rlayers,
+            project_crs,
+            chunks=chunks_to_load,
+            should_solve=len(self.vertices) >= 1,
+            clear_chunk_cache=False
+        )
+
+        for c in chunks_to_load:
+            self.chunk_cache[str(c)] = False
+
+        chunk_task.taskCompleted.connect(lambda: self.handleChunkUploaded([ str(c) for c in chunks_to_load ]))
+        chunk_task.taskTerminated.connect(lambda: self.handleChunkUploadFailed([ str(c) for c in chunks_to_load ]))
+        chunk_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
+        chunk_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
+        chunk_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
+
+        QgsApplication.taskManager().addTask(chunk_task)
+        self.task_trash.append(chunk_task)
 
     def clearState(self):
         self.rb.reset()
