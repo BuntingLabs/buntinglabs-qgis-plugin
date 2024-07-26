@@ -585,12 +585,13 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.updateFogOfWar()
 
     def keyPressEvent(self, e):
+        # e.ignore() is .accept() for some reason
         if e.key() in (Qt.Key_Backspace, Qt.Key_Delete) and len(self.vertices) >= 2:
             if not e.isAutoRepeat():
                 self.undo()
                 self.vertices.pop()
 
-                e.accept()
+                e.ignore()
 
                 # Deleting should re-solve the trajectory tree
                 if len(self.vertices) >= 2:
@@ -601,10 +602,10 @@ class AIVectorizerTool(QgsMapToolCapture):
             self.vertices = []
             self.rb.reset()
 
-            e.accept()
+            e.ignore()
             return
 
-        e.ignore()
+        e.accept()
 
     # Determines if we need a new upload + solve task. Returns True if that task was fired,
     # or False if the current tree likely works, or otherwise cannot solve.
