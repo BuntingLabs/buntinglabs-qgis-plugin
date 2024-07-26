@@ -539,9 +539,6 @@ class AIVectorizerTool(QgsMapToolCapture):
                     self.vertices.append(completed_pt)
 
                 vertex_px_added = sum([queued_points[i].distance(queued_points[i-1]) for i in range(1, len(queued_points))]) / self.calculateDxDy()
-            # This allows the mouse hover to work until the new solve arrives
-            if self.last_tree is not None:
-                self.last_tree.trajectory_root = newTrajectoryRoot
 
             # This just sets the capturing property to true so we can
             # repeatedly call it
@@ -561,6 +558,10 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             self.maybeNewSolve(hover_point=point, clear_chunk_cache=should_clear_chunk_cache,
                                vertex_px_added=int(vertex_px_added))
+
+            # This allows the mouse hover to work until the new solve arrives
+            if self.last_tree is not None and newTrajectoryRoot is not None and not (e.modifiers() & Qt.ShiftModifier):
+                self.last_tree.trajectory_root = newTrajectoryRoot
 
     def handleGraphConstructed(self, pts_cost, pts_paths, params, img_params, included_chunks, opt_points, trajectory_root, cur_uuid):
         (x_min, y_min, dxdy, y_max) = params
