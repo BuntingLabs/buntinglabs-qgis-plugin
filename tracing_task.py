@@ -54,7 +54,7 @@ class UploadChunkAndSolveTask(QgsTask):
     metadataReceived = pyqtSignal(tuple) # (chunks_today, chunks_left, pricing_tier, fly_instance_id)
 
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs,
-                 chunks=[],
+                 chunks=[], vertex_px_added=0,
                  should_solve=False, clear_chunk_cache=False):
         super().__init__(
             'AI Vectorizer processing map chunks on server' if should_solve else 'AI Vectorizer preloading map chunks',
@@ -69,6 +69,7 @@ class UploadChunkAndSolveTask(QgsTask):
         self.chunks = chunks
         self.should_solve = should_solve
         self.clear_chunk_cache = clear_chunk_cache
+        self.vertex_px_added = vertex_px_added
 
         # Store and return later
         self.cur_uuid = self.tracing_tool.currentUuid()
@@ -171,7 +172,7 @@ class UploadChunkAndSolveTask(QgsTask):
             'x-clear-chunk-cache': str(self.clear_chunk_cache).lower(),
             'x-qgis-version': Qgis.QGIS_VERSION,
             'x-plugin-version': self.tracing_tool.plugin.plugin_version,
-            'x-cur-vertices': str(len(self.tracing_tool.vertices))
+            'x-vertex-px-added': str(self.vertex_px_added)
         }
         if self.tracing_tool.fly_instance_id:
             headers['fly-force-instance-id'] = self.tracing_tool.fly_instance_id

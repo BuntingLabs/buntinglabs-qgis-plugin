@@ -522,6 +522,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             # Solve beforehand, because if no path is found, it should be treated like
             # a normal vectorizer
             queued_points, newTrajectoryRoot = self.solvePathToPoint(point)
+            vertex_px_added = 0
 
             # Shift key ignores autocomplete and just adds a single vertex
             if e.modifiers() & Qt.ShiftModifier or queued_points is None:
@@ -537,6 +538,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                     self.addVertex(completed_pt)
                     self.vertices.append(completed_pt)
 
+                vertex_px_added = sum([queued_points[i].distance(queued_points[i-1]) for i in range(1, len(queued_points))]) / self.calculateDxDy()
             # This allows the mouse hover to work until the new solve arrives
             if self.last_tree is not None:
                 self.last_tree.trajectory_root = newTrajectoryRoot
@@ -557,7 +559,8 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             should_clear_chunk_cache = len(self.vertices) == 2
 
-            self.maybeNewSolve(hover_point=point, clear_chunk_cache=should_clear_chunk_cache)
+            self.maybeNewSolve(hover_point=point, clear_chunk_cache=should_clear_chunk_cache,
+                               vertex_px_added=int(vertex_px_added))
 
     def handleGraphConstructed(self, pts_cost, pts_paths, params, img_params, included_chunks, opt_points, trajectory_root, cur_uuid):
         (x_min, y_min, dxdy, y_max) = params
@@ -604,7 +607,8 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     # Determines if we need a new upload + solve task. Returns True if that task was fired,
     # or False if the current tree likely works, or otherwise cannot solve.
-    def maybeNewSolve(self, hover_point, clear_chunk_cache=False):
+    def maybeNewSolve(self, hover_point, clear_chunk_cache=False,
+                      vertex_px_added=0):
         # Clear chunk cache first
         if clear_chunk_cache:
             self.chunk_cache = dict()
@@ -645,7 +649,8 @@ class AIVectorizerTool(QgsMapToolCapture):
             project_crs,
             chunks=chunks_to_load,
             should_solve=len(self.vertices) >= 1,
-            clear_chunk_cache=clear_chunk_cache
+            clear_chunk_cache=clear_chunk_cache,
+            vertex_px_added=vertex_px_added
         )
 
         for c in chunks_to_load:
