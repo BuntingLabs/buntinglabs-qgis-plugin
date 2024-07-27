@@ -650,7 +650,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             rlayers,
             project_crs,
             chunks=chunks_to_load,
-            should_solve=len(self.vertices) >= 1,
+            should_solve=True,
             clear_chunk_cache=clear_chunk_cache,
             vertex_px_added=vertex_px_added
         )

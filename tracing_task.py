@@ -144,6 +144,11 @@ class UploadChunkAndSolveTask(QgsTask):
                 'coordinates': [ [y, x] for (x, y) in self.tracing_tool.vertices ]
             })
 
+            # If we don't have enough vertices, then the user right clicked before this task started,
+            # which means it's actually out of date and should be ignored.
+            if len(self.tracing_tool.vertices) < 2:
+                return False
+
             body.extend([
                 '--' + boundary,
                 'Content-Disposition: form-data; name="solve_vector"; filename="vector.json"',
