@@ -4,6 +4,7 @@ import uuid
 from enum import Enum
 from collections import namedtuple
 from typing import List
+import time
 from functools import reduce, lru_cache
 
 from qgis.PyQt.QtCore import Qt, QUrl
@@ -217,6 +218,9 @@ class AIVectorizerTool(QgsMapToolCapture):
         # QgsTasks that aren't kept around as objects can sometimes not run!
         # so if we don't track them, we get issues
         self.task_trash = []
+        # Track the time of the last solve request to avoid spamming the server
+        # is either None or a time.time()
+        self.last_solve = None
 
         # For showing chunks remaining, status, and instructions to the user.
         self.is_message_bar_visible = False
@@ -630,11 +634,13 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # We need a new solve if there's more chunks or the
         # root has changed since our last solve.
-        if self.last_tree is not None:
-            root, dxdy = self.last_tree.trajectory_root, self.last_tree.params[2]
-            # Hoping dxdy * 1e-2 acts as epsilon-small in coordinate system, where if the root distance
-            # to the past point is small, then the last tree is still a valid solve.
-            if len(chunks_to_load) == 0 and self.indexToPoint(root).distance(self.vertices[-1]) < dxdy*1e-2:
+        if self.last_tree is not None and len(chunks_to_load) == 0:
+            # No new chunks, last tree still works.
+            return False
+        elif self.last_tree is None:
+            # No tree, so solve unless we have a request in flight.
+            # Current timeout: 5 seconds
+            if self.last_solve is not None and (time.time() - self.last_solve) < 5:
                 return False
 
         root = QgsProject.instance().layerTreeRoot()
@@ -661,17 +667,23 @@ class AIVectorizerTool(QgsMapToolCapture):
             vertex_px_added=vertex_px_added
         )
 
+        self.last_solve = time.time()
         for c in chunks_to_load:
             self.chunk_cache[str(c)] = False
 
         chunk_task.taskCompleted.connect(lambda: self.handleChunkUploaded([ str(c) for c in chunks_to_load ]))
         chunk_task.taskTerminated.connect(lambda: self.handleChunkUploadFailed([ str(c) for c in chunks_to_load ]))
+        chunk_task.taskCompleted.connect(lambda: self.clearSolve())
+        chunk_task.taskTerminated.connect(lambda: self.clearSolve())
         chunk_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
         chunk_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
         chunk_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
 
         QgsApplication.taskManager().addTask(chunk_task)
         self.task_trash.append(chunk_task)
+
+    def clearSolve(self):
+        self.last_solve = None
 
     def clearState(self):
         self.rb.reset()
