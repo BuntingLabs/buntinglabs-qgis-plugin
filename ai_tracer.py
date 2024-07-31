@@ -307,7 +307,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def solvePathToPoint(self, pt: QgsPointXY) -> List[QgsPointXY]:
         if self.last_tree is None or len(self.vertices) == 0:
-            return None, None
+            return None
 
         # (x_min, y_max, dxdy) = self.last_tree.params
         (_, pts_paths, _) = self.last_graph
@@ -315,12 +315,12 @@ class AIVectorizerTool(QgsMapToolCapture):
         cur_tree = self.last_tree
         # Bad trees
         if len(cur_tree._graph_nodes_coords()) == 0:
-            return None, None
+            return None
 
         # Because we are clipping paths, we need to check the two closest nodes.
         path = cur_tree.dijkstra(cur_tree.closest_nodes_to(pt, 2)[0])[0]
         if len(path) == 0:
-            return None, None
+            return None
 
         # Replace bits of the path as possible
         minimized_path = [path[0]]
@@ -344,11 +344,13 @@ class AIVectorizerTool(QgsMapToolCapture):
             coordinates = [ snapMatch.point() if not snapMatch.point().isEmpty() else coord for snapMatch, coord in zip(snapped_points, coordinates) ]
 
         # Trim to the closest point to the cursor
+        # If we trim the path, then new tree root is NOT
+        # where the last vertex is.
         if len(coordinates) > 2:
             coordinates = self.trimVerticesToPoint(coordinates, pt)
 
         # minimized_paths is [ QgsPointXY, ... ]
-        return coordinates, minimized_path[-1] if len(minimized_path) > 0 else path[0]
+        return coordinates
 
     # This is cached and we manually reset it when we get a new feature.
     @lru_cache(maxsize=1)
@@ -441,7 +443,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         # Last solve contains this chunk
         elif self.last_tree is not None:
-            path_map_pts, _ = self.solvePathToPoint(pt)
+            path_map_pts = self.solvePathToPoint(pt)
 
             # None = failed to navigate
             if path_map_pts is not None:
@@ -524,7 +526,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             # Solve beforehand, because if no path is found, it should be treated like
             # a normal vectorizer
-            queued_points, newTrajectoryRoot = self.solvePathToPoint(point)
+            queued_points = self.solvePathToPoint(point)
             vertex_px_added = 0
 
             # Shift key ignores autocomplete and just adds a single vertex
@@ -543,6 +545,11 @@ class AIVectorizerTool(QgsMapToolCapture):
 
                 vertex_px_added = sum([queued_points[i].distance(queued_points[i-1]) for i in range(1, len(queued_points))]) / self.calculateDxDy()
 
+            # We've changed the last vertex, so the previous tree is no
+            # longer valid.
+            self.last_tree = None
+            self.last_graph = None
+
             # This just sets the capturing property to true so we can
             # repeatedly call it
             self.startCapturing()
@@ -553,18 +560,14 @@ class AIVectorizerTool(QgsMapToolCapture):
                 return
 
             # Shift key or not, we re-solve based on the newest point.
-            # Because the tree is a DAG, we can always route from the last point.
-            # However, we must re-solve because many pixels of the previous image
-            # are orphaned from the most recent vertex.
+            # While the last tree is a DAG, solvePathToPoint often interpolates
+            # between nodes in the tree, meaning we can't always use the closest
+            # last point and keep the tree.
 
             should_clear_chunk_cache = len(self.vertices) == 2
 
             self.maybeNewSolve(hover_point=point, clear_chunk_cache=should_clear_chunk_cache,
                                vertex_px_added=int(vertex_px_added))
-
-            # This allows the mouse hover to work until the new solve arrives
-            if self.last_tree is not None and newTrajectoryRoot is not None and not (e.modifiers() & Qt.ShiftModifier):
-                self.last_tree.trajectory_root = newTrajectoryRoot
 
     def handleGraphConstructed(self, pts_cost, pts_paths, params, img_params, included_chunks, opt_points, trajectory_root, cur_uuid):
         (x_min, y_min, dxdy, y_max) = params
