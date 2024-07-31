@@ -99,7 +99,7 @@ class UploadChunkAndSolveTask(QgsTask):
             # Format_RGB888 is 24-bit (8 bits each) for each color channel, unlike
             # Format_RGB32 which by default has 0xff on the alpha channel, and screws
             # up reading it into GDAL!
-            img = QImage(QSize(chunk.CONST_CHUNK_SIZE, chunk.CONST_CHUNK_SIZE), QImage.Format_RGB888)
+            img = QImage(QSize(chunk.chunk_size, chunk.chunk_size), QImage.Format_RGB888)
 
             # white is most canonically background
             color = QColor(255, 255, 255)

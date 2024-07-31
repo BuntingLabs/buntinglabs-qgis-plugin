@@ -66,42 +66,45 @@ from collections import OrderedDict
 AutocompleteCacheEntry = namedtuple('AutocompleteCacheEntry', ['uniq_id', 'n_px', 'n_py'])
 
 class Chunk:
-    CONST_CHUNK_SIZE = 256
+    DEFAULT_CHUNK_SIZE = 256
 
-    def __init__(self, x, y, dxdy):
+    def __init__(self, x, y, dxdy, chunk_size=DEFAULT_CHUNK_SIZE):
         self.x = x
         self.y = y
         self.dxdy = dxdy
+        self.chunk_size = chunk_size
 
     def __str__(self):
-        return f"Chunk({self.x},{self.y},{self.dxdy})"
+        if self.chunk_size == self.DEFAULT_CHUNK_SIZE:
+            return f"Chunk({self.x},{self.y},{self.dxdy})"
+        else:
+            return f"Chunk({self.x},{self.y},{self.dxdy},{self.chunk_size})"
 
     def __eq__(self, other):
         if not isinstance(other, Chunk):
             return NotImplemented
-        return (self.x, self.y, self.dxdy) == (other.x, other.y, other.dxdy)
+        return (self.x, self.y, self.dxdy, self.chunk_size) == (other.x, other.y, other.dxdy, other.chunk_size)
 
     def __hash__(self):
-        return hash((self.x, self.y, self.dxdy))
+        return hash((self.x, self.y, self.dxdy, self.chunk_size))
 
     @staticmethod
     def strToChunk(chunk_str: str):
-        x, y, dxdy = map(float, chunk_str[6:-1].split(','))
-        return Chunk(int(x), int(y), dxdy)
+        parts = chunk_str[6:-1].split(',')
+        x, y, dxdy = map(float, parts[:3])
+        chunk_size = int(parts[3]) if len(parts) > 3 else Chunk.DEFAULT_CHUNK_SIZE
+        return Chunk(int(x), int(y), dxdy, chunk_size)
 
-    # gives a Chunk
     @staticmethod
-    def pointToChunk(pt: QgsPointXY, dxdy: float):
+    def pointToChunk(pt: QgsPointXY, dxdy: float, chunk_size=DEFAULT_CHUNK_SIZE):
         ix, iy = (pt.x() / dxdy, pt.y() / dxdy)
-
-        # Carefully use // instead of /, to avoid rounding towards zero.
-        return Chunk(int(ix // Chunk.CONST_CHUNK_SIZE), int(iy // Chunk.CONST_CHUNK_SIZE), dxdy)
+        return Chunk(int(ix // chunk_size), int(iy // chunk_size), dxdy, chunk_size)
 
     def toPolygon(self) -> QgsGeometry:
-        x_min = self.dxdy * self.x * self.CONST_CHUNK_SIZE
-        x_max = self.dxdy * (self.x + 1) * self.CONST_CHUNK_SIZE
-        y_min = self.dxdy * self.y * self.CONST_CHUNK_SIZE
-        y_max = self.dxdy * (self.y + 1) * self.CONST_CHUNK_SIZE
+        x_min = self.dxdy * self.x * self.chunk_size
+        x_max = self.dxdy * (self.x + 1) * self.chunk_size
+        y_min = self.dxdy * self.y * self.chunk_size
+        y_max = self.dxdy * (self.y + 1) * self.chunk_size
 
         points = [
             QgsPointXY(x_min, y_min),
@@ -114,26 +117,26 @@ class Chunk:
         return QgsGeometry.fromPolygonXY([points])
 
     def toRectangle(self) -> QgsRectangle:
-        x_min = self.dxdy * self.x * self.CONST_CHUNK_SIZE
-        x_max = self.dxdy * (self.x + 1) * self.CONST_CHUNK_SIZE
-        y_min = self.dxdy * self.y * self.CONST_CHUNK_SIZE
-        y_max = self.dxdy * (self.y + 1) * self.CONST_CHUNK_SIZE
+        x_min = self.dxdy * self.x * self.chunk_size
+        x_max = self.dxdy * (self.x + 1) * self.chunk_size
+        y_min = self.dxdy * self.y * self.chunk_size
+        y_max = self.dxdy * (self.y + 1) * self.chunk_size
         return QgsRectangle(x_min, y_min, x_max, y_max)
 
     def distanceToPoint(self, pt: QgsPointXY) -> float:
         return self.toRectangle().distance(pt)
 
     @staticmethod
-    def rectangleToChunks(extent: QgsRectangle, dxdy: float) -> list:
+    def rectangleToChunks(extent: QgsRectangle, dxdy: float, chunk_size=DEFAULT_CHUNK_SIZE) -> list:
         x_min, y_min, x_max, y_max = extent.xMinimum(), extent.yMinimum(), extent.xMaximum(), extent.yMaximum()
 
-        start_chunk = Chunk.pointToChunk(QgsPointXY(x_min, y_min), dxdy)
-        end_chunk = Chunk.pointToChunk(QgsPointXY(x_max, y_max), dxdy)
+        start_chunk = Chunk.pointToChunk(QgsPointXY(x_min, y_min), dxdy, chunk_size)
+        end_chunk = Chunk.pointToChunk(QgsPointXY(x_max, y_max), dxdy, chunk_size)
 
         chunks = []
         for x in range(start_chunk.x, end_chunk.x + 1):
             for y in range(start_chunk.y, end_chunk.y + 1):
-                chunks.append(Chunk(x, y, dxdy))
+                chunks.append(Chunk(x, y, dxdy, chunk_size))
 
         return chunks
 
