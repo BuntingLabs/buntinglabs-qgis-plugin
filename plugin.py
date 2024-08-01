@@ -24,7 +24,8 @@ SETTING_API_TOKEN = "buntinglabs-qgis-plugin/api_key"
 SETTING_TOS = "buntinglabs-qgis-plugin/terms_of_service_state"
 
 def generate_random_api_key():
-    return ''.join(random.choice(string.ascii_uppercase + string.ascii_lowercase + string.digits) for _ in range(12))
+    readable_chars = 'ABCDEFGHJKLMNPRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+    return ''.join(random.choice(readable_chars) for _ in range(12))
 
 class BuntingLabsPlugin:
     # This plugin class contains strictly things that interface with
