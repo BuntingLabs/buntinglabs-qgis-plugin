@@ -74,6 +74,10 @@ class UploadChunkAndSolveTask(QgsTask):
         # Store and return later
         self.cur_uuid = self.tracing_tool.currentUuid()
 
+        # For handling race conditions: don't emit graphConstructed
+        # if the last vertex has changed since this task started
+        self.last_vertex = self.tracing_tool.vertices[-1]
+
         # For progress bar
         self.start_time = time.time()
         ETs = self.tracing_tool.plugin.expected_time
@@ -257,6 +261,10 @@ class UploadChunkAndSolveTask(QgsTask):
                 y_max = data['y_max']
                 img_height, img_width = data['img_height'], data['img_width']
                 opt_points = data['opt_points']
+
+                # Check if the last vertex has changed since this task started
+                if self.last_vertex != self.tracing_tool.vertices[-1]:
+                    return False
 
                 self.graphConstructed.emit((pts_cost, pts_paths, (x_min, y_min, dxdy, y_max), (img_height, img_width), data['included_chunks'], opt_points, data['trajectory_root'], self.cur_uuid))
                 self.metadataReceived.emit((data['chunks_today'], data['chunks_left_today'], data['pricing_tier'], data['fly_instance_id'] if 'fly_instance_id' in data else None))
