@@ -177,7 +177,8 @@ class UploadChunkAndSolveTask(QgsTask):
         headers = {
             'Content-Type': 'multipart/form-data; boundary=' + boundary,
             'Accept-Encoding': 'gzip',
-            'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo"),
+            # If the user puts in a newline character or a space it breaks everything
+            'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo").strip(),
             'x-clear-chunk-cache': str(self.clear_chunk_cache).lower(),
             'x-qgis-version': Qgis.QGIS_VERSION,
             'x-plugin-version': self.tracing_tool.plugin.plugin_version,
