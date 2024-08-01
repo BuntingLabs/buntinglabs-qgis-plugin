@@ -53,6 +53,8 @@ class UploadChunkAndSolveTask(QgsTask):
     graphConstructed = pyqtSignal(tuple)
     metadataReceived = pyqtSignal(tuple) # (chunks_today, chunks_left, pricing_tier, fly_instance_id)
 
+    clearCache = pyqtSignal() # clears chunk-related caching
+
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs,
                  chunks=[], vertex_px_added=0,
                  should_solve=False, clear_chunk_cache=False):
@@ -225,6 +227,10 @@ class UploadChunkAndSolveTask(QgsTask):
             loop.exec_()
 
             pb_timer.stop()
+
+            # Check for 'x-clear-chunks' header
+            if reply.rawHeader(b'x-clear-chunks') == b'yes':
+                self.clearCache.emit()
 
             if reply.error() != QNetworkReply.NoError:
                 error_payload = reply.readAll().data()

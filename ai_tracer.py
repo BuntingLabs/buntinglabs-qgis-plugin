@@ -675,6 +675,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         chunk_task.taskTerminated.connect(lambda: self.handleChunkUploadFailed([ str(c) for c in chunks_to_load ]))
         chunk_task.taskCompleted.connect(lambda: self.clearSolve())
         chunk_task.taskTerminated.connect(lambda: self.clearSolve())
+        chunk_task.clearCache.connect(lambda: self.clearCache())
         chunk_task.messageReceived.connect(lambda e: self.notifyUserOfMessage(*e))
         chunk_task.graphConstructed.connect(lambda args: self.handleGraphConstructed(*args))
         chunk_task.metadataReceived.connect(lambda args: self.handleMetadata(*args))
@@ -684,6 +685,11 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def clearSolve(self):
         self.last_solve = None
+
+    def clearCache(self):
+        self.chunk_cache = dict()
+        self.included_chunks = []
+        self.updateFogOfWar()
 
     def clearState(self):
         self.rb.reset()
