@@ -570,8 +570,10 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             should_clear_chunk_cache = len(self.vertices) == 2
 
+            # drop_far_chunks because they've loaded all the chunks they wanted for this segment,
+            # and can load new ones by hovering
             self.maybeNewSolve(hover_point=point, clear_chunk_cache=should_clear_chunk_cache,
-                               vertex_px_added=int(vertex_px_added))
+                               vertex_px_added=int(vertex_px_added), drop_far_chunks=True)
 
     def handleGraphConstructed(self, pts_cost, pts_paths, params, img_params, included_chunks, opt_points, trajectory_root, cur_uuid):
         (x_min, y_min, dxdy, y_max) = params
@@ -620,7 +622,7 @@ class AIVectorizerTool(QgsMapToolCapture):
     # Determines if we need a new upload + solve task. Returns True if that task was fired,
     # or False if the current tree likely works, or otherwise cannot solve.
     def maybeNewSolve(self, hover_point, clear_chunk_cache=False,
-                      vertex_px_added=0):
+                      vertex_px_added=0, drop_far_chunks=False):
         # Clear chunk cache first
         if clear_chunk_cache:
             self.chunk_cache = dict()
@@ -664,6 +666,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             chunks=chunks_to_load,
             should_solve=True,
             clear_chunk_cache=clear_chunk_cache,
+            drop_far_chunks=drop_far_chunks,
             vertex_px_added=vertex_px_added
         )
 

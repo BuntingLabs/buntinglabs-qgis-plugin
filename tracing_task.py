@@ -56,7 +56,7 @@ class UploadChunkAndSolveTask(QgsTask):
     clearCache = pyqtSignal() # clears chunk-related caching
 
     def __init__(self, tracing_tool, vlayer, rlayers, project_crs,
-                 chunks=[], vertex_px_added=0,
+                 chunks=[], vertex_px_added=0, drop_far_chunks=False,
                  should_solve=False, clear_chunk_cache=False):
         super().__init__(
             'AI Vectorizer processing map chunks on server' if should_solve else 'AI Vectorizer preloading map chunks',
@@ -72,6 +72,7 @@ class UploadChunkAndSolveTask(QgsTask):
         self.should_solve = should_solve
         self.clear_chunk_cache = clear_chunk_cache
         self.vertex_px_added = vertex_px_added
+        self.drop_far_chunks = drop_far_chunks
 
         # Store and return later
         self.cur_uuid = self.tracing_tool.currentUuid()
@@ -182,6 +183,7 @@ class UploadChunkAndSolveTask(QgsTask):
             # If the user puts in a newline character or a space it breaks everything
             'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo").strip(),
             'x-clear-chunk-cache': str(self.clear_chunk_cache).lower(),
+            'x-drop-far-chunks': 'yes' if self.drop_far_chunks else 'no',
             'x-qgis-version': Qgis.QGIS_VERSION,
             'x-plugin-version': self.tracing_tool.plugin.plugin_version,
             'x-vertex-px-added': str(self.vertex_px_added)
