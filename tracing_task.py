@@ -272,7 +272,7 @@ class UploadChunkAndSolveTask(QgsTask):
                 opt_points = data['opt_points']
 
                 # Check if the last vertex has changed since this task started
-                if self.last_vertex != self.tracing_tool.vertices[-1]:
+                if len(self.tracing_tool.vertices) == 0 or self.last_vertex != self.tracing_tool.vertices[-1]:
                     return False
 
                 self.graphConstructed.emit((pts_cost, pts_paths, (x_min, y_min, dxdy, y_max), (img_height, img_width), data['included_chunks'], opt_points, data['trajectory_root'], self.cur_uuid))
