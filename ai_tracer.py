@@ -608,6 +608,12 @@ class AIVectorizerTool(QgsMapToolCapture):
                 # Deleting should re-solve the trajectory tree
                 if len(self.vertices) >= 2:
                     self.maybeNewSolve(hover_point=self.vertices[-1])
+
+                # We've changed the last vertex, so the previous tree is no
+                # longer valid.
+                self.last_tree = None
+                self.last_graph = None
+
                 return
         elif e.key() == Qt.Key_Escape:
             self.stopCapturing()
