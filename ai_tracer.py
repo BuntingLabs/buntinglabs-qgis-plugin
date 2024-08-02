@@ -639,7 +639,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         if self.last_tree is not None and len(chunks_to_load) == 0:
             # No new chunks, last tree still works.
             return False
-        elif self.last_tree is None:
+        elif self.last_tree is None and len(chunks_to_load) == 0:
             # No tree, so solve unless we have a request in flight.
             # Current timeout: 5 seconds
             if self.last_solve is not None and (time.time() - self.last_solve) < 5:
