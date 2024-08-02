@@ -13,7 +13,7 @@ from qgis.PyQt.QtGui import QColor, QDesktopServices
 from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsSnapIndicator
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
-    QgsWkbTypes, QgsLayerTreeLayer, QgsRectangle
+    QgsWkbTypes, QgsLayerTreeLayer, QgsRectangle, QgsLineString
 from qgis.core import QgsField
 from PyQt5.QtCore import QVariant
 import numpy as np
@@ -543,9 +543,10 @@ class AIVectorizerTool(QgsMapToolCapture):
                     queued_points = queued_points[1:]
 
                 # No shift key, add autocompletions as expected
-                for completed_pt in queued_points:
-                    self.addVertex(completed_pt)
-                    self.vertices.append(completed_pt)
+                if queued_points:
+                    curve = QgsLineString(queued_points)
+                    self.addCurve(curve)
+                    self.vertices.extend(queued_points)
 
                 vertex_px_added = sum([queued_points[i].distance(queued_points[i-1]) for i in range(1, len(queued_points))]) / self.calculateDxDy()
 
