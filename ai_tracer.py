@@ -616,8 +616,33 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             e.ignore()
             return
+        elif e.key() in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            self.panMap(e.key())
+            
+            e.ignore()
+            return
 
         e.accept()
+
+    def panMap(self, key):
+        canvas = self.plugin.iface.mapCanvas()
+        old_center = canvas.center()
+        current_extent = canvas.extent()
+
+        step_width = current_extent.width() * 0.1
+        step_height = current_extent.height() * 0.1
+
+        if key == Qt.Key_Left:
+            new_center = QgsPointXY(old_center.x() - step_width, old_center.y())
+        elif key == Qt.Key_Right:
+            new_center = QgsPointXY(old_center.x() + step_width, old_center.y())
+        elif key == Qt.Key_Up:
+            new_center = QgsPointXY(old_center.x(), old_center.y() + step_height)
+        elif key == Qt.Key_Down:
+            new_center = QgsPointXY(old_center.x(), old_center.y() - step_height)
+
+        canvas.setCenter(new_center)
+        canvas.refresh()
 
     # Determines if we need a new upload + solve task. Returns True if that task was fired,
     # or False if the current tree likely works, or otherwise cannot solve.
