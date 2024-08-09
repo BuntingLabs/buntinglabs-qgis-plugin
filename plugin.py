@@ -1,13 +1,12 @@
 # Copyright 2024 Bunting Labs, Inc.
 
 import os
-import string
 import random
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, \
     QPushButton, QAction, QHBoxLayout, QCheckBox, QButtonGroup, QRadioButton
 from PyQt5.QtGui import QIcon, QMovie, QPixmap
-from PyQt5.QtCore import QSettings, Qt
+from PyQt5.QtCore import QSettings, Qt, QSize, QTimer
 
 from qgis.core import Qgis, QgsApplication, QgsVectorLayer, QgsWkbTypes
 from qgis.gui import QgsMapToolCapture
@@ -66,6 +65,8 @@ class BuntingLabsPlugin:
             1: 1200,
             2: 1900
         }
+        # Timer to check after the GUI is created
+        self.vis_timer = None
 
     def update_checkable(self):
         # Before onboarding, it's always checkable.
@@ -126,6 +127,19 @@ class BuntingLabsPlugin:
 
         self.settings_action.triggered.connect(self.openSettings)
         self.iface.addPluginToMenu('Bunting Labs', self.settings_action)
+
+        # Fire timer
+        self.vis_timer = QTimer()
+        self.vis_timer.singleShot(5000, self.checkPluginToolbarVisibility)
+
+    def checkPluginToolbarVisibility(self):
+        # If the user doesn't have the plugins toolbar visible, show a warning.
+        if not self.iface.pluginToolBar().isVisible():
+            self.notifyUserOfMessage("The plugins toolbar is not visible. Enable it in View > Toolbars > Plugins Toolbar.",
+                                     Qgis.Warning,
+                                     'https://youtu.be/Wm1pTj55Rys',
+                                     'Watch Tutorial',
+                                     120)
 
     # There are five dialogs in our onboarding flow.
     # 1. TOS dialog, requesting consent to our terms.
@@ -485,6 +499,12 @@ class BuntingLabsPlugin:
         self.api_key_dialog.close()
 
     def unload(self):
+        # Stop and delete the timer to prevent it from running after the plugin is unloaded
+        if self.vis_timer is not None:
+            if self.vis_timer.isActive():
+                self.vis_timer.stop()
+            self.vis_timer.deleteLater()
+
         if self.settings_action is not None:
             self.iface.removePluginMenu('Bunting Labs', self.settings_action)
 
