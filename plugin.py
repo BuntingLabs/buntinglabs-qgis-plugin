@@ -268,7 +268,7 @@ class BuntingLabsPlugin:
             f"BuntingLabsQGISAIVectorizer/{self.plugin_version}",
             new_api_key
         )
-        self.register_task.finishedSignal.connect(lambda status: self.confirmEmailPlease(status, new_api_key))
+        self.register_task.finishedSignal.connect(lambda status: self.confirmEmailPlease(status, new_api_key, user_email))
 
         QgsApplication.taskManager().addTask(
             self.register_task,
@@ -276,7 +276,7 @@ class BuntingLabsPlugin:
 
     # This either 4. asks them for a secret token from /dashboard, or
     # 3. asks them to confirm their email.
-    def confirmEmailPlease(self, status: str, new_api_key: str):
+    def confirmEmailPlease(self, status: str, new_api_key: str, user_email: str):
         # If status was 'created', confirm email.
         # if status was 'error'
         if status == 'failed':
@@ -345,9 +345,13 @@ class BuntingLabsPlugin:
                 "Introduction", "Create account", "Verify email"
             ], 2))
 
-            intro_text = QLabel("Please open your email inbox, and find the email from <code>login@stytch.com</code> titled “Your account creation request for Bunting Labs”.")
+            intro_text = QLabel(f"We sent an email to <b>{user_email}</b>.")
             intro_text.setWordWrap(True)
             layout.addWidget(intro_text)
+
+            instruction_text = QLabel("Please open that email's inbox and find the email from <code>login@stytch.com</code> titled “Your account creation request for Bunting Labs”.")
+            instruction_text.setWordWrap(True)
+            layout.addWidget(instruction_text)
 
             pixmap = QPixmap(os.path.join(os.path.dirname(__file__), 'assets', 'confirm_email.png')).scaled(512, 295, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             pixmap_label = QLabel()
