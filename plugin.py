@@ -393,7 +393,7 @@ class BuntingLabsPlugin:
 
         gif_label = QLabel()
         gif_movie = QMovie(os.path.join(os.path.dirname(__file__), 'assets', 'instructions.gif'))
-        gif_movie.setScaledSize(QSize(724/1.5, 480/1.5))
+        gif_movie.setScaledSize(QSize(int(724/1.5), int(480/1.5)))
         gif_movie.start()
         gif_label.setMovie(gif_movie)
 
