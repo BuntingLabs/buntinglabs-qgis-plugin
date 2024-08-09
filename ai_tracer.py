@@ -7,9 +7,9 @@ from typing import List
 import time
 from functools import reduce, lru_cache
 
-from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QPushButton, QProgressBar, QLabel
-from qgis.PyQt.QtGui import QColor, QDesktopServices
+from qgis.PyQt.QtGui import QColor
 from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsSnapIndicator
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
@@ -276,18 +276,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     # msg_type is Qgis.Critical, Qgis.Info, Qgis.Warning, Qgis.success
     def notifyUserOfMessage(self, msg, msg_type, link_url, link_text, duration):
-        widget = self.plugin.iface.messageBar().createMessage("AI Vectorizer", msg)
-        button = QPushButton(widget)
-
-        if link_url is not None and link_text is not None:
-            button.setText(link_text)
-            button.pressed.connect(lambda: QDesktopServices.openUrl(QUrl(link_url)))
-        else:
-            button.setText("Open Settings")
-            button.pressed.connect(self.plugin.openSettings)
-
-        widget.layout().addWidget(button)
-        self.plugin.iface.messageBar().pushWidget(widget, msg_type, duration=duration)
+        self.plugin.notifyUserOfMessage(msg, msg_type, link_url, link_text, duration)
 
     def trimVerticesToPoint(self, vertices: List[QgsPointXY], pt: QgsPointXY) -> List[QgsPointXY]:
         assert len(vertices) >= 2
