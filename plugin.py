@@ -206,7 +206,7 @@ class BuntingLabsPlugin:
         intro_text.setWordWrap(True)
         layout.addWidget(intro_text)
 
-        explain_text = QLabel("You will automatically be on our free tier, with access to 600 processed map chunks per month. No credit card is needed.")
+        explain_text = QLabel("You will automatically be on our free trial, with a limit of 150 map chunks for evaluation. No credit card is needed.")
         explain_text.setWordWrap(True)
         layout.addWidget(explain_text)
 
@@ -401,7 +401,7 @@ class BuntingLabsPlugin:
         left_layout.addWidget(QLabel("1. Load a raster layer to digitize"))
         left_layout.addWidget(QLabel("2. Create a new vector layer (e.g. Shapefile)"))
         left_layout.addWidget(QLabel("3. Toggle editing mode"))
-        left_layout.addWidget(QLabel("4. Click the AI Vectorizer icon"))
+        left_layout.addWidget(QLabel("4. Click the AI Vectorizer icon in the Plugins toolbar"))
         left_layout.addWidget(QLabel("5. Click two vertices along the feature you want to digitize"))
         left_layout.addWidget(QLabel("6. Move your mouse forwards along the feature to extend the AI tracing forward and load more chunks of the map"))
         left_layout.addWidget(QLabel("7. Left click to accept the AI progress and autocomplete again from that point"))

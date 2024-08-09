@@ -4,10 +4,10 @@ This QGIS plugin uses machine learning to automatically vectorize lines and poly
 
 ![AI vectorizing a map in QGIS](assets/example.gif)
 
-You can use the plugin by starting features as you would, except with the AI
-Vectorizer activated instead of the Add Line Feature tool. The plugin will autocomplete
-ahead of you. If it makes a mistake, you can hold down `shift` to cut and then add
-vertices without autocomplete, before returning back to autocomplete mode.
+Use this plugin by clicking the **Vectorize with AI** icon in the QGIS Plugins Toolbar.
+Begin editing a vector layer and add two vertices to a new feature to start tracing.
+Hover around the map to let the AI autocomplete ahead of you. Use `shift` to manually
+add vertices without autocomplete.
 
 ### Network Usage
 
