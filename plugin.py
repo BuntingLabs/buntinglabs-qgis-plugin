@@ -58,6 +58,7 @@ class BuntingLabsPlugin:
             self.plugin_version = 'N/A'
 
         self.settings_action = None
+        self.menu_vectorize_action = None
 
         # For progress bar, time in ms per number of chunks
         self.expected_time = {
@@ -117,6 +118,15 @@ class BuntingLabsPlugin:
 
         # Trigger a current layer change event to get the right action
         self.current_layer_change_event(self.iface.activeLayer())
+
+        # Also show vectorize icon in menu
+        self.menu_vectorize_action = QAction(
+            QIcon(":images/themes/default/mActionNewVectorLayer.svg"),
+            'Vectorize with AI',
+            self.iface.mainWindow()
+        )
+        self.menu_vectorize_action.triggered.connect(self.toolbarClick)
+        self.iface.addPluginToMenu('Bunting Labs', self.menu_vectorize_action)
 
         # Let the user change settings
         self.settings_action = QAction(
@@ -507,6 +517,8 @@ class BuntingLabsPlugin:
 
         if self.settings_action is not None:
             self.iface.removePluginMenu('Bunting Labs', self.settings_action)
+        if self.menu_vectorize_action is not None:
+            self.iface.removePluginMenu('Bunting Labs', self.menu_vectorize_action)
 
         self.iface.removeToolBarIcon(self.action)
 
@@ -533,3 +545,11 @@ class BuntingLabsPlugin:
             self.action.setChecked(False)
 
             self.iface.actionPan().trigger()
+
+            # To get here, I think they need to click it through
+            # the Plugins menu, so they could be a little confused.
+            self.notifyUserOfMessage("To use the AI Vectorizer, finish onboarding, select a vector layer, and enable editing.",
+                                     Qgis.Warning,
+                                     'https://www.youtube.com/watch?v=PKEuQS4sMJE',
+                                     'Watch Tutorial',
+                                     120)
