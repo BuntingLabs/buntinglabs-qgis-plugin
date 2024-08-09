@@ -88,7 +88,8 @@ class ValidateEmailTask(QgsTask):
     def run(self):
         headers = {
             'host': 'qgis-api.buntinglabs.com',
-            'x-api-key': self.api_key
+            'x-api-key': self.api_key,
+            'content-type': 'text/plain'
         }
 
         try:
