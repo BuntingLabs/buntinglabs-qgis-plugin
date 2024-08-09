@@ -377,6 +377,11 @@ class BuntingLabsPlugin:
 
             layout.addLayout(status_layout)
 
+            change_email_link = QLabel("<a href='#'>Change email</a>")
+            change_email_link.setAlignment(Qt.AlignCenter)
+            change_email_link.linkActivated.connect(lambda: (self.email_confirm_dialog.accept(), self.openEmailDialog()))
+            layout.addWidget(change_email_link)
+
             version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
             version_label.setAlignment(Qt.AlignCenter)
 
