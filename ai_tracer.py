@@ -47,14 +47,15 @@ def find_closest_projection_point(pts, pt):
             line_segment_index = i
     return QgsPointXY(projected_pt), line_segment_index
 
-# DFS to find all visible raster layers, even those in groups
+# DFS to find all visible raster layers in visible groups
 def find_raster_layers(node):
     layers = []
     for child in node.children():
-        if isinstance(child, QgsLayerTreeLayer) and isinstance(child.layer(), QgsRasterLayer) and child.itemVisibilityChecked():
-            layers.append(child.layer())
-        elif child.children():
-            layers.extend(find_raster_layers(child))
+        if child.itemVisibilityChecked():
+            if isinstance(child, QgsLayerTreeLayer) and isinstance(child.layer(), QgsRasterLayer):
+                layers.append(child.layer())
+            elif child.children():
+                layers.extend(find_raster_layers(child))
     return layers
 
 class ShiftClickState(Enum):
