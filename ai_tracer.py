@@ -58,10 +58,6 @@ def find_raster_layers(node):
                 layers.extend(find_raster_layers(child))
     return layers
 
-class ShiftClickState(Enum):
-    HAS_NOT_CUT = 1
-    HAS_CUT = 2
-
 from collections import OrderedDict
 
 # (n_px, n_py) are "normalized" positions
