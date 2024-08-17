@@ -138,6 +138,17 @@ class Chunk:
 
         return chunks
 
+SUPPORTED_VECTOR_TYPES = [
+    QgsWkbTypes.LineString,
+    QgsWkbTypes.MultiLineString,
+    QgsWkbTypes.Polygon,
+    QgsWkbTypes.MultiPolygon,
+    QgsWkbTypes.CompoundCurve,
+    QgsWkbTypes.CurvePolygon,
+    QgsWkbTypes.MultiCurve,
+    QgsWkbTypes.MultiSurface
+]
+
 class AutocompleteCache:
     def __init__(self, max_size, round_px=1.0):
         self.cache = OrderedDict()
@@ -470,19 +481,16 @@ class AIVectorizerTool(QgsMapToolCapture):
     def canvasReleaseEvent(self, e):
         vlayer = self.plugin.iface.activeLayer()
         if not isinstance(vlayer, QgsVectorLayer):
-            self.plugin.iface.messageBar().pushMessage(
-                "Bunting Labs AI Vectorizer",
-                "No active vector layer.",
-                Qgis.Warning,
-                duration=15)
+            self.notifyUserOfMessage("The active layer is not a vector layer.", Qgis.Warning, None, None, 10)
             return
-        elif vlayer.wkbType() not in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString,
-                                    QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
-            self.plugin.iface.messageBar().pushMessage(
-                "Bunting Labs AI Vectorizer",
-                "Unsupported vector layer type for AI autocomplete.",
+        elif vlayer.wkbType() not in SUPPORTED_VECTOR_TYPES:
+            self.notifyUserOfMessage(
+                f"Vector layer type '{QgsWkbTypes.displayString(vlayer.wkbType())}' is not supported for AI autocomplete.",
                 Qgis.Warning,
-                duration=15)
+                None,
+                None,
+                15
+            )
             return
 
         if e.button() == Qt.RightButton:
@@ -646,9 +654,14 @@ class AIVectorizerTool(QgsMapToolCapture):
         if not isinstance(vlayer, QgsVectorLayer):
             self.notifyUserOfMessage("The active layer is not a vector layer.", Qgis.Warning, None, None, 10)
             return False
-        elif vlayer.wkbType() not in [QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString,
-                                    QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon]:
-            self.notifyUserOfMessage("The active layer's geometry type is not compatible with this plugin. Please use LineString, MultiLineString, Polygon, or MultiPolygon.", Qgis.Warning, None, None, 10)
+        elif vlayer.wkbType() not in SUPPORTED_VECTOR_TYPES:
+            self.notifyUserOfMessage(
+                f"Vector layer type '{QgsWkbTypes.displayString(vlayer.wkbType())}' is not supported for AI autocomplete.",
+                Qgis.Warning,
+                None,
+                None,
+                15
+            )
             return False
 
         chunk_task = UploadChunkAndSolveTask(
