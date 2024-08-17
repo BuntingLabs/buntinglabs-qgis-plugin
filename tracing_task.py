@@ -308,7 +308,7 @@ def georeference_img_to_tiff(img_np, crs_wkt, x_min, y_min, x_max, y_max):
                                                gdal.GDT_Byte, options=["COMPRESS=JPEG", "JPEG_QUALITY=85"])
 
     # Set the geotransform
-    geotransform = [x_min, (x_max-x_min)/rasterXSize, 0, y_min, 0, (y_max-y_min)/rasterYSize]
+    geotransform = [x_min, (x_max-x_min)/rasterXSize, 0, y_max, 0, -(y_max-y_min)/rasterYSize]
     dst.SetGeoTransform(geotransform)
 
     # Set the projection
