@@ -555,10 +555,11 @@ class BuntingLabsPlugin:
 
             self.iface.actionPan().trigger()
 
-            # To get here, I think they need to click it through
-            # the Plugins menu, so they could be a little confused.
-            self.notifyUserOfMessage("To use the AI Vectorizer, finish onboarding, select a vector layer, and enable editing.",
-                                     Qgis.Warning,
-                                     'https://www.youtube.com/watch?v=PKEuQS4sMJE',
-                                     'Watch Tutorial',
-                                     120)
+            if not self.action.isEnabled():
+                # To get here, I think they need to click it through
+                # the Plugins menu, so they could be a little confused.
+                self.notifyUserOfMessage("To use the AI Vectorizer, finish onboarding, select a vector layer, and enable editing.",
+                                        Qgis.Warning,
+                                        'https://www.youtube.com/watch?v=PKEuQS4sMJE',
+                                        'Watch Tutorial',
+                                        120)
