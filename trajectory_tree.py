@@ -31,6 +31,7 @@ class TrajectoryTree:
         graph_nodes = set(self.graph_neighbors.keys()).union(dest for dest, _ in sum(self.graph_neighbors.values(), []))
         return [(np.unravel_index(int(node), (self.img_params[0], self.img_params[1])), node) for node in graph_nodes]
 
+    # TODO use a kd-tree
     def closest_nodes_to(self, pt: QgsPointXY, n: int):
         x_min, y_min, dxdy, y_max = self.params
 

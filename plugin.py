@@ -2,27 +2,30 @@
 
 import os
 import random
+import csv
+from io import StringIO
+import json
+import base64
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, \
-    QPushButton, QAction, QHBoxLayout, QCheckBox, QFileDialog
+    QPushButton, QAction, QHBoxLayout, QCheckBox, QFileDialog, QProgressBar, \
+    QToolBar
 from PyQt5.QtGui import QIcon, QMovie, QPixmap
-from PyQt5.QtCore import QSettings, Qt, QSize, QTimer
+from PyQt5.QtCore import QSettings, Qt, QSize, QTimer, QUrl
 
-from qgis.core import Qgis, QgsApplication, QgsVectorLayer, QgsWkbTypes
-from qgis.gui import QgsMapToolCapture
+from qgis.core import Qgis, QgsApplication, QgsVectorLayer, QgsWkbTypes, \
+    QgsNetworkAccessManager
+from qgis.core import QgsPointXY, QgsProject, QgsCoordinateReferenceSystem, \
+    QgsCoordinateTransform, QgsLineString
+from qgis.gui import QgsMapToolCapture, QgsMapCanvas
 from qgis.PyQt.QtGui import QDesktopServices
-from qgis.PyQt.QtCore import QUrl
-
-from PyQt5.QtCore import QSize
+from qgis.PyQt.QtCore import QUrl, QTimer, Q_ARG
+from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 from .ai_tracer import AIVectorizerTool
 from .login_check_task import EmailRegisterTask, ValidateEmailTask
 from .digitize_ld_task import DigitizeLandDescriptionTask
 from .onboarding_widget import OnboardingHeaderWidget
-
-from qgis.core import QgsPointXY, QgsProject, QgsCoordinateReferenceSystem, \
-    QgsCoordinateTransform, QgsLineString
-
 
 # Settings for QGIS
 SETTING_API_TOKEN = "buntinglabs-qgis-plugin/api_key"
@@ -50,6 +53,9 @@ class BuntingLabsPlugin:
         icon_path = os.path.join(os.path.dirname(__file__), "vectorizing_icon.png")
         self.action = QAction(QIcon(icon_path), '<b>Vectorize with AI</b><p>Toggle editing on a vector layer then enable to autocomplete new geometries.</p>', None)
         self.tracer = AIVectorizerTool(self)
+
+        self.georef_data_buffer = b''
+        self.georef_progressbar = None
 
         # Read the plugin version
         try:
@@ -155,6 +161,189 @@ class BuntingLabsPlugin:
         # Fire timer
         self.vis_timer = QTimer()
         self.vis_timer.singleShot(5000, self.checkPluginToolbarVisibility)
+
+        QgsApplication.instance().focusChanged.connect(self.on_focus_changed)
+
+    # We can only load the georeferencer icon once the GUI is open
+    def on_focus_changed(self, old, now):
+        if now and now.objectName() == "QgsGeorefPluginGuiBase":
+            toolbars = now.findChildren(QToolBar)
+            action_exists = any(
+                any(action.text() == "Generate GCP points from satellite" for action in toolbar.actions())
+                for toolbar in toolbars
+            )
+
+            if not action_exists and len(toolbars) > 2:
+                georef_icon_path = os.path.join(os.path.dirname(__file__), "assets/georef_to_satellite.png")
+                toolbars[1].addAction(QAction(
+                    QIcon(georef_icon_path),
+                    "Generate GCP points from satellite",
+                    self.iface.mainWindow(),
+                    triggered=lambda: self.uploadRasterToS3()
+                ))
+
+    def loadGCPsFromBytes(self, points_data: str):
+        project_crs = QgsProject.instance().crs()
+
+        csv_data = StringIO(points_data)
+        csv_reader = csv.reader(csv_data)
+        next(csv_reader)  # Skip header row
+        for row in csv_reader:
+            map_x, map_y, pixel_x, pixel_y, enable = row
+            # sometimes we have two headers
+            if map_x == 'mapX':
+                continue
+
+            map_coord = QgsPointXY(float(map_x), float(map_y))
+            img_pt = QgsPointXY(float(pixel_x), float(pixel_y))
+            enable_bool = bool(int(enable))
+            self.addGCP(img_pt, map_coord, project_crs, enable_bool)
+
+    def findRasterSource(self):
+        # Should show error message, and return None if an error is encountered.
+        georef = next(w for w in QgsApplication.instance().topLevelWidgets() if w.objectName() == 'QgsGeorefPluginGuiBase')
+
+        def find_canvas(widget):
+            stack = [widget]
+            while stack:
+                current = stack.pop()
+                if isinstance(current, QgsMapCanvas):
+                    return current
+                stack.extend(current.children())
+            return None
+
+        # This is delicate code that relies on the QGIS GUI, so handle errors nicely.
+        georef_canvas = find_canvas(georef)
+        if georef_canvas is not None:
+            georef_layers = georef_canvas.layers()
+            if len(georef_layers) >= 1:
+                # Should be a raster
+                if isinstance(georef_layers[0], QgsVectorLayer):
+                    self.handleGeoreferencerError(error_msg="AI Georeferencer can only georeference raster sources currently")
+                    return None
+
+                return georef_layers[0].source()
+            else:
+                self.handleGeoreferencerError(error_msg="Load a raster layer in the georeferencer window to add AI GCPs")
+                return None
+
+        self.handleGeoreferencerError(error_msg="AI Georeferencer could not find a raster to georeference")
+        return None
+
+    def uploadRasterToS3(self):
+        # Create a dialog with a progress bar
+        dialog = QDialog(self.iface.mainWindow())
+        dialog.setWindowTitle("Uploading raster to server...")
+        dialog.setWindowModality(Qt.NonModal)  # Make the dialog non-modal
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowStaysOnTopHint)
+
+        layout = QVBoxLayout(dialog)
+        progress_bar = QProgressBar(dialog)
+        layout.addWidget(progress_bar)
+        dialog.setLayout(layout)
+        # Configure the progress bar
+        progress_bar.setMinimum(0)
+        progress_bar.setMaximum(100)
+        progress_bar.setValue(0)
+        # Center the dialog over the georeferencer window
+        georef_window = next(w for w in QgsApplication.instance().topLevelWidgets() if w.objectName() == 'QgsGeorefPluginGuiBase')
+        geo_rect = georef_window.geometry()
+        dialog.move(geo_rect.center() - dialog.rect().center())
+
+        # Handle dialog closure
+        dialog.rejected.connect(lambda: print("Dialog closed prematurely"))
+
+        dialog.show()
+        self.georef_progressbar = (dialog, progress_bar)
+
+        # OK, let's upload
+        raster_path = self.findRasterSource()
+        if not raster_path:
+            return
+
+        # Get presigned URL
+        georef_url = QUrl('https://qgis-api.buntinglabs.com/georef/v1/satellite-gcps')
+
+        qgis_bbox = f"{','.join(map(str, QgsCoordinateTransform(self.iface.mapCanvas().mapSettings().destinationCrs(), QgsCoordinateReferenceSystem('EPSG:4326'), QgsProject.instance()).transformBoundingBox(self.iface.mapCanvas().extent()).toRectF().getCoords()))}"
+        # Base64 encode qgis_bbox and replace non-url safe characters
+        encoded_bbox = base64.b64encode(qgis_bbox.encode()).decode()
+        encoded_bbox = encoded_bbox.replace('+', '-').replace('/', '_').replace('=', '.')
+
+        # Pass width/height of map canvas
+        canvas_width = self.iface.mapCanvas().width()
+        canvas_height = self.iface.mapCanvas().height()
+
+        georef_url.setQuery(f'projection=3857&api_key={self.settings.value(SETTING_API_TOKEN, "demo")}&bbox={encoded_bbox}&canvas_width={canvas_width}&canvas_height={canvas_height}')
+
+        with open(raster_path, 'rb') as file:
+            raster_file_content = file.read()
+
+        nam = QgsNetworkAccessManager.instance()
+        nam.setTimeout(300 * 1000)
+        request = QNetworkRequest(georef_url)
+        request.setRawHeader(b'Content-Type', b'application/octet-stream')
+        request.setTransferTimeout(300 * 1000)  # Set timeout to 300 seconds (300000 milliseconds)
+        response = nam.post(request, raster_file_content)
+
+        response.readyRead.connect(lambda: self.handleNewData(response))
+
+        response.finished.connect(lambda: self.closeGeorefPB())
+        response.errorOccurred.connect(lambda: self.handleGeoreferencerError())
+
+    def closeGeorefPB(self):
+        if self.georef_progressbar is not None:
+            self.georef_progressbar[0].hide()
+            self.georef_progressbar[0].deleteLater()
+            self.georef_progressbar = None
+
+    def handleGeoreferencerError(self, error_msg="Georeferencing failed. Please try again."):
+        self.closeGeorefPB()
+
+        self.iface.messageBar().pushMessage(
+            "Bunting Labs AI Georeferencer",
+            error_msg,
+            Qgis.Critical,
+            duration=30
+        )
+
+    def handleNewData(self, reply):
+        data = reply.readAll().data()
+        self.georef_data_buffer += data
+
+        while b'\n\n' in self.georef_data_buffer and self.georef_progressbar is not None:
+            message, self.georef_data_buffer = self.georef_data_buffer.split(b'\n\n', 1)
+            if message.startswith(b'data: '):
+                message = message[6:]
+            else:
+                print('message doesnt start with data:', len(message))
+
+            try:
+                jsonPayload = json.loads(message.decode())
+
+                if 'progress' in jsonPayload:
+                    self.georef_progressbar[1].setValue(jsonPayload['progress'])
+                if 'message' in jsonPayload:
+                    self.georef_progressbar[0].setWindowTitle(jsonPayload['message'])
+                if 'result' in jsonPayload:
+                    self.loadGCPsFromBytes(jsonPayload['result'])
+                    self.closeGeorefPB()
+            except json.JSONDecodeError:
+                print(f"Failed to decode JSON: {message}")
+
+    def addGCP(self, img_pt: QgsPointXY, map_coord: QgsPointXY, map_crs: QgsCoordinateReferenceSystem, enable: bool = True, finalize: bool = True):
+        georef = next(w for w in QgsApplication.instance().topLevelWidgets() if w.objectName() == 'QgsGeorefPluginGuiBase')
+        add_point_method = next(m for m in [georef.metaObject().method(i) for i in range(georef.metaObject().methodCount())] if m.name() == b'addPoint')
+
+        success = add_point_method.invoke(
+            georef,
+            Qt.ConnectionType.DirectConnection,
+            Q_ARG(QgsPointXY, img_pt),
+            Q_ARG(QgsPointXY, map_coord),
+            Q_ARG(QgsCoordinateReferenceSystem, map_crs),
+            Q_ARG(bool, enable),
+            Q_ARG(bool, finalize)
+        )
+        return success
 
     def checkPluginToolbarVisibility(self):
         # If the user doesn't have the plugins toolbar visible, show a warning.
