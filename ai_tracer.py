@@ -583,7 +583,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.included_chunks = included_chunks
 
         # If the server communicates to us that a chunk we've previously uploaded (chunk_cache[key] == True)
-        # is now included in its newest computation, then we should invalidate it from the chunk cache.
+        # is not included in its newest computation, then we should invalidate it from the chunk cache.
         previously_uploaded_chunks = list(self.chunk_cache.keys())
         for prev_uploaded in previously_uploaded_chunks:
             if self.chunk_cache[prev_uploaded] == True and prev_uploaded not in self.included_chunks:
@@ -630,9 +630,9 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         chunks_to_load = self.suggestChunksToLoad(hover_point)
 
-        # Only preload chunks on move if we're not currently uploading
+        # Only preload chunks on move if we're not currently uploading more than one chunk
         # (chunk_cache[x] is False if we're uploading)
-        if not all(self.chunk_cache.values()):
+        if sum(not value for value in self.chunk_cache.values()) > 1:
             return False
 
         # We need a new solve if there's more chunks or the
