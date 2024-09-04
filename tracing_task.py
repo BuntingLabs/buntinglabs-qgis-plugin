@@ -32,6 +32,9 @@ def rasterUnitsPerPixelEstimate(rlayer, project_crs, vertices):
     point1_rlayer_crs = transform.transform(vertices[-1])
     point2_rlayer_crs = transform.transform(vertices[-2])
     dist_rlayer_crs = math.sqrt((point2_rlayer_crs.x() - point1_rlayer_crs.x())**2 + (point2_rlayer_crs.y() - point1_rlayer_crs.y())**2)
+    # Avoid division by zero
+    if dist_rlayer_crs == 0:
+        return rlayer.rasterUnitsPerPixelX()
 
     return (dist_proj_crs / dist_rlayer_crs) * rlayer.rasterUnitsPerPixelX()
 
