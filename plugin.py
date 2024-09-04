@@ -4,7 +4,7 @@ import os
 import random
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, \
-    QPushButton, QAction, QHBoxLayout, QCheckBox, QButtonGroup, QRadioButton
+    QPushButton, QAction, QHBoxLayout, QCheckBox, QFileDialog
 from PyQt5.QtGui import QIcon, QMovie, QPixmap
 from PyQt5.QtCore import QSettings, Qt, QSize, QTimer
 
@@ -17,7 +17,11 @@ from PyQt5.QtCore import QSize
 
 from .ai_tracer import AIVectorizerTool
 from .login_check_task import EmailRegisterTask, ValidateEmailTask
+from .digitize_ld_task import DigitizeLandDescriptionTask
 from .onboarding_widget import OnboardingHeaderWidget
+
+from qgis.core import QgsPointXY, QgsProject, QgsCoordinateReferenceSystem, \
+    QgsCoordinateTransform, QgsLineString
 
 
 # Settings for QGIS
@@ -127,6 +131,16 @@ class BuntingLabsPlugin:
         )
         self.menu_vectorize_action.triggered.connect(self.toolbarClick)
         self.iface.addPluginToMenu('Bunting Labs', self.menu_vectorize_action)
+
+        # Let the user change settings
+        self.digitize_ld = QAction(
+            QIcon(":images/themes/default/mActionSaveAsPDF.svg"),
+            'Digitize Land Description',
+            self.iface.mainWindow()
+        )
+
+        self.digitize_ld.triggered.connect(self.digitizeLandDescription)
+        self.iface.addPluginToMenu('Bunting Labs', self.digitize_ld)
 
         # Let the user change settings
         self.settings_action = QAction(
@@ -461,6 +475,95 @@ class BuntingLabsPlugin:
         onboarding_dialog.setLayout(layout)
         onboarding_dialog.exec_()
 
+    def digitizeLandDescription(self):
+        mapTool = self.iface.mapCanvas().mapTool()
+        # No clue when it wouldn't have 'points' attribute/method
+        if not isinstance(mapTool, QgsMapToolCapture) or not hasattr(mapTool, 'points'):
+            self.notifyUserOfMessage("Active map tool must be Add Line Feature tool for Digitize Land Description",
+                Qgis.Warning,
+                'https://youtu.be/gufDsGYwJoM',
+                'Watch Tutorial',
+                60)
+            return
+        elif isinstance(mapTool, AIVectorizerTool):
+            self.notifyUserOfMessage("Use the Add Line Feature tool for Digitize Land Description (not AI Vectorizer)",
+                Qgis.Warning,
+                'https://youtu.be/gufDsGYwJoM',
+                'Watch Tutorial',
+                60)
+            return
+
+        if len(mapTool.points()) == 0:
+            self.notifyUserOfMessage("Manually draw the point of beginning with Add Line Feature before selecting PDF",
+                Qgis.Warning,
+                'https://youtu.be/gufDsGYwJoM',
+                'Watch Tutorial',
+                60)
+            return
+        elif len(mapTool.points()) > 1:
+            self.notifyUserOfMessage(f"Draw only 1 point of beginning vertex. You've drawn {len(mapTool.points())} vertices",
+                Qgis.Warning,
+                'https://youtu.be/gufDsGYwJoM',
+                'Watch Tutorial',
+                60)
+            return
+        point_of_beginning = mapTool.points()[0] # QgsPointXY, probably
+
+        # We need the point of beginning in EPSG:4326, so a vector layer must be selected
+        active_layer = self.iface.activeLayer()
+        if not active_layer or not isinstance(active_layer, QgsVectorLayer):
+            self.notifyUserOfMessage("Please select the target vector layer before digitizing a land description",
+                Qgis.Warning,
+                'https://youtu.be/gufDsGYwJoM',
+                'Watch Tutorial',
+                60)
+            return
+
+        # Convert the first vertex from active vector layer's CRS to EPSG:4326
+        transform = QgsCoordinateTransform(
+            active_layer.crs(),
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            QgsProject.instance()
+        )
+        wgs84_pob = transform.transform(point_of_beginning)
+
+        file_dialog = QFileDialog()
+        file_dialog.setFileMode(QFileDialog.ExistingFile)
+        file_dialog.setNameFilter("PDF Files (*.pdf)")
+        if file_dialog.exec_():
+            selected_files = file_dialog.selectedFiles()
+            if selected_files:
+                lat, lon = wgs84_pob.y(), wgs84_pob.x()
+
+                # Upload the PDF to the server
+                self.digitize_ld_task = DigitizeLandDescriptionTask(
+                    "Digitizing an uploaded land description",
+                    self.settings.value(SETTING_API_TOKEN, "demo"),
+                    selected_files[0],
+                    [lon, lat]
+                )
+                self.digitize_ld_task.messageReceived.connect(lambda args: self.notifyUserOfMessage(*args))
+                self.digitize_ld_task.coordinatesReceived.connect(lambda coordinates: self.handlePDFCoordinatesReceived(mapTool, coordinates[0]))
+
+                QgsApplication.taskManager().addTask(
+                    self.digitize_ld_task,
+                )
+
+    def handlePDFCoordinatesReceived(self, mapTool, latlons):
+        project_crs = QgsProject.instance().crs()
+        wgs84_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+        transform = QgsCoordinateTransform(wgs84_crs, project_crs, QgsProject.instance())
+        coords = [transform.transform(QgsPointXY(lon, lat)) for lon, lat in latlons]
+
+        for coord in coords:
+            mapTool.addVertex(coord)
+
+        self.notifyUserOfMessage(f"Successfully digitized {len(coords)} coordinates from the land description.",
+                                Qgis.Success,
+                                None,
+                                None,
+                                60)
+
     def openSettings(self):
         # Create a closeable modal for API key input
         self.api_key_dialog = QDialog(self.iface.mainWindow())
@@ -526,6 +629,8 @@ class BuntingLabsPlugin:
 
         if self.settings_action is not None:
             self.iface.removePluginMenu('Bunting Labs', self.settings_action)
+        if self.digitize_ld is not None:
+            self.iface.removePluginMenu('Bunting Labs', self.digitize_ld)
         if self.menu_vectorize_action is not None:
             self.iface.removePluginMenu('Bunting Labs', self.menu_vectorize_action)
 
