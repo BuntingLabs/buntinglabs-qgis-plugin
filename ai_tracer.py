@@ -277,7 +277,8 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         rb.setFillColor(self.digitizingFillColor())
         rb.setStrokeColor(self.digitizingStrokeColor())
-        rb.setWidth(self.digitizingStrokeWidth())
+        # Don't set the stroke width to be anything less than 3
+        rb.setWidth(max(3, self.digitizingStrokeWidth()))
         rb.setLineStyle(Qt.DotLine)
 
         return rb
