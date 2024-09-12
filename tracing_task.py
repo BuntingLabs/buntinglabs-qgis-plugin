@@ -237,14 +237,27 @@ class UploadChunkAndSolveTask(QgsTask):
             if reply.rawHeader(b'x-clear-chunks') == b'yes':
                 self.clearCache.emit()
 
-            if reply.error() != QNetworkReply.NoError:
-                error_payload = reply.readAll().data()
+            content = reply.readAll().data()
+            if reply.error() == QNetworkReply.HostNotFoundError:
+                self.messageReceived.emit(('Could not connect to autocomplete server, is your internet working?', Qgis.Critical, None, None, 15))
+                return False
+            elif reply.error() == QNetworkReply.RemoteHostClosedError:
+                self.messageReceived.emit(('Connection to server was unexpectedly closed. Try again or check your network.', Qgis.Critical, None, None, 15))
+                return False
+            elif reply.error() == QNetworkReply.TimeoutError:
+                self.messageReceived.emit(('Server connection timed out, internet might be too slow', Qgis.Critical, None, None, 15))
+                return False
+            elif reply.error() == QNetworkReply.UnknownNetworkError:
+                self.messageReceived.emit(('Network error encountered, internet issues', Qgis.Critical, None, None, 15))
+                return False
+            elif reply.error() != QNetworkReply.NoError:
+                print('QNetworkReply', reply.error())
                 if reply.rawHeader(b'Content-Encoding') == b'gzip':
-                    error_payload = gzip.decompress(error_payload).decode('utf-8')
+                    content = gzip.decompress(content).decode('utf-8')
                 else:
-                    error_payload = error_payload.decode('utf-8')
+                    content = content.decode('utf-8')
                 try:
-                    error_details = json.loads(error_payload)
+                    error_details = json.loads(content)
                     self.messageReceived.emit((
                         error_details.get('message'),
                         Qgis.Critical,
@@ -253,13 +266,12 @@ class UploadChunkAndSolveTask(QgsTask):
                         15
                     ))
                 except json.JSONDecodeError:
-                    self.messageReceived.emit((error_payload, Qgis.Critical, None, None, 15))
+                    self.messageReceived.emit((content, Qgis.Critical, None, None, 15))
                 return False
 
             self.setProgress(80.0)
 
             if self.should_solve:
-                content = reply.readAll().data()
                 if reply.rawHeader(b'Content-Encoding') == b'gzip':
                     buffer = gzip.decompress(content).decode('utf-8')
                 else:
