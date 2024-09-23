@@ -16,6 +16,10 @@ class TrajectoryTree:
         # Hidden, with a setter
         self.graph_neighbors = defaultdict(list)
         for path, cost in pts_costs.items():
+            # NaN, inf, -inf all serialize to null in JSON
+            if cost is None:
+                continue
+
             orig, dest = map(int, path.split('_'))
             if orig == dest:
                 continue
