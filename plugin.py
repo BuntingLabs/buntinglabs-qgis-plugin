@@ -6,6 +6,7 @@ import csv
 from io import StringIO
 import json
 import base64
+from enum import Enum
 
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, \
     QPushButton, QAction, QHBoxLayout, QCheckBox, QFileDialog, QProgressBar, \
@@ -34,6 +35,11 @@ SETTING_TOS = "buntinglabs-qgis-plugin/terms_of_service_state"
 def generate_random_api_key():
     readable_chars = 'ABCDEFGHJKLMNPRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
     return ''.join(random.choice(readable_chars) for _ in range(12))
+
+# Types of georeferencing
+class GeoreferencingType(Enum):
+    GCP = 1
+    SATELLITE_GCP = 2
 
 class BuntingLabsPlugin:
     # This plugin class contains strictly things that interface with
@@ -174,12 +180,20 @@ class BuntingLabsPlugin:
             )
 
             if not action_exists and len(toolbars) > 2:
-                georef_icon_path = os.path.join(os.path.dirname(__file__), "assets/georef_to_satellite.png")
+                sat_georef_icon_path = os.path.join(os.path.dirname(__file__), "assets/georef_to_satellite.png")
                 toolbars[1].addAction(QAction(
-                    QIcon(georef_icon_path),
+                    QIcon(sat_georef_icon_path),
                     "Generate GCP points from satellite",
                     self.iface.mainWindow(),
-                    triggered=lambda: self.uploadRasterToS3()
+                    triggered=lambda: self.uploadRasterToS3(GeoreferencingType.SATELLITE_GCP)
+                ))
+
+                georef_icon_path = os.path.join(os.path.dirname(__file__), "assets/georef.png")
+                toolbars[1].addAction(QAction(
+                    QIcon(georef_icon_path),
+                    "Generate GCP points with AI",
+                    self.iface.mainWindow(),
+                    triggered=lambda: self.uploadRasterToS3(GeoreferencingType.GCP)
                 ))
 
     def loadGCPsFromBytes(self, points_data: str):
@@ -230,7 +244,7 @@ class BuntingLabsPlugin:
         self.handleGeoreferencerError(error_msg="AI Georeferencer could not find a raster to georeference")
         return None
 
-    def uploadRasterToS3(self):
+    def uploadRasterToS3(self, kind: GeoreferencingType):
         # Create a dialog with a progress bar
         dialog = QDialog(self.iface.mainWindow())
         dialog.setWindowTitle("Uploading raster to server...")
@@ -262,7 +276,8 @@ class BuntingLabsPlugin:
             return
 
         # Get presigned URL
-        georef_url = QUrl('https://qgis-api.buntinglabs.com/georef/v1/satellite-gcps')
+        target_path = '/georef/v1/satellite-gcps' if kind == GeoreferencingType.SATELLITE_GCP else '/georef/v1/gcps'
+        georef_url = QUrl(f'https://qgis-api.buntinglabs.com{target_path}')
 
         qgis_bbox = f"{','.join(map(str, QgsCoordinateTransform(self.iface.mapCanvas().mapSettings().destinationCrs(), QgsCoordinateReferenceSystem('EPSG:4326'), QgsProject.instance()).transformBoundingBox(self.iface.mapCanvas().extent()).toRectF().getCoords()))}"
         # Base64 encode qgis_bbox and replace non-url safe characters
@@ -275,8 +290,12 @@ class BuntingLabsPlugin:
 
         georef_url.setQuery(f'projection=3857&api_key={self.settings.value(SETTING_API_TOKEN, "demo")}&bbox={encoded_bbox}&canvas_width={canvas_width}&canvas_height={canvas_height}')
 
-        with open(raster_path, 'rb') as file:
-            raster_file_content = file.read()
+        try:
+            with open(raster_path, 'rb') as file:
+                raster_file_content = file.read()
+        except FileNotFoundError:
+            self.handleGeoreferencerError("Raster file not found. Please check the file path and try again.")
+            return
 
         nam = QgsNetworkAccessManager.instance()
         nam.setTimeout(300 * 1000)
