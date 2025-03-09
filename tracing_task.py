@@ -15,6 +15,13 @@ from qgis.PyQt.QtGui import QImage, QPainter, QColor
 from qgis.PyQt.QtCore import QSize, pyqtSignal, QUrl, QEventLoop, QTimer
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
+# Safely detect WEBP support
+GDAL_SUPPORTS_WEBP = 'WEBP' in gdal.GetDriverByName('GTiff').GetMetadataItem('DMD_CREATIONOPTIONLIST')
+if GDAL_SUPPORTS_WEBP:
+    CHUNK_OPTIONS = ["COMPRESS=WEBP", "WEBP_QUALITY=85"]
+else:
+    CHUNK_OPTIONS = ["COMPRESS=JPEG", "JPEG_QUALITY=90"]
+
 def rasterUnitsPerPixelEstimate(rlayer, project_crs, vertices):
     # vertices are in project_crs
     assert len(vertices) == 2
@@ -320,7 +327,7 @@ def georeference_img_to_tiff(img_np, crs_wkt, x_min, y_min, x_max, y_max):
 
     # Create a new GeoTIFF file in memory
     dst = gdal.GetDriverByName('GTiff').Create(vsimem_path, rasterXSize, rasterYSize, rasterCount,
-                                               gdal.GDT_Byte, options=["COMPRESS=JPEG", "JPEG_QUALITY=85"])
+                                               gdal.GDT_Byte, options=CHUNK_OPTIONS)
 
     # Set the geotransform
     geotransform = [x_min, (x_max-x_min)/rasterXSize, 0, y_max, 0, -(y_max-y_min)/rasterYSize]
