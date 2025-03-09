@@ -6,6 +6,7 @@ from collections import namedtuple
 from typing import List
 import time
 from functools import reduce, lru_cache
+from datetime import datetime, timedelta
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QPushButton, QProgressBar, QLabel
@@ -197,6 +198,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         self.chunk_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
         self.chunk_cache = dict() # True=uploaded, False=uploading
         self.fly_instance_id = None
+        self.last_server_error = datetime.min # long ago
 
         # FOG OF WAR
         self.fow_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
@@ -472,6 +474,7 @@ class AIVectorizerTool(QgsMapToolCapture):
         for chunk_str in chunk_strs:
             self.chunk_cache[chunk_str] = True
     def handleChunkUploadFailed(self, chunk_strs):
+        self.last_server_error = datetime.now()
         for chunk_str in chunk_strs:
             if chunk_str in self.chunk_cache:
                 del self.chunk_cache[chunk_str]
@@ -668,6 +671,9 @@ class AIVectorizerTool(QgsMapToolCapture):
                 None,
                 15
             )
+            return False
+
+        if datetime.now() - self.last_server_error < timedelta(seconds=4.0):
             return False
 
         chunk_task = UploadChunkAndSolveTask(
