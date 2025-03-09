@@ -512,6 +512,11 @@ class AIVectorizerTool(QgsMapToolCapture):
             else:
                 raise ValueError
 
+            if len(vlayer.fields()) >= 1:
+                from qgis.gui import QgsAttributeDialog
+                dialog = QgsAttributeDialog(vlayer, f, False, self.plugin.iface.mainWindow(), True)
+                dialog.exec()
+
             vlayer.addFeature(f)
 
             # Clean up the plugin between features
