@@ -187,9 +187,17 @@ class UploadChunkAndSolveTask(QgsTask):
 
         body = b'\r\n'.join([part.encode() if isinstance(part, str) else part for part in body])
 
+        try:
+            from PyQt5.QtCore import QSettings
+            from qgis.core import QgsApplication
+            locale = str(QSettings().value("locale/userLocale", QgsApplication.locale()))[:2]
+        except Exception as e:
+            locale = "en"
+
         headers = {
             'Content-Type': 'multipart/form-data; boundary=' + boundary,
             'Accept-Encoding': 'gzip',
+            'Accept-Language': locale,
             # If the user puts in a newline character or a space it breaks everything
             'x-api-key': self.tracing_tool.plugin.settings.value("buntinglabs-qgis-plugin/api_key", "demo").strip(),
             'x-clear-chunk-cache': str(self.clear_chunk_cache).lower(),
