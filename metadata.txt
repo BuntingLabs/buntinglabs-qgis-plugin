@@ -2,7 +2,7 @@
 name=Bunting Labs AI Vectorizer
 description=Autocomplete for vectorizing and georeferencing raster maps.
 about=This plugin uses a neural network via API to automatically vectorize and georeference raster maps.
-version=2.9
+version=2.10
 qgisMinimumVersion=3.18
 author=Brendan Ashworth
 email=brendan@buntinglabs.com
