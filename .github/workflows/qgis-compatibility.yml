@@ -1,0 +1,48 @@
+name: QGIS compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: Compile Python
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile plugin
+        run: python -m compileall -q .
+
+  qgis-3-44:
+    name: Import with QGIS 3.44.12
+    needs: compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run QGIS import smoke test
+        run: |
+          docker run --rm \
+            --platform linux/amd64 \
+            --env PYTHONDONTWRITEBYTECODE=1 \
+            --env QT_QPA_PLATFORM=offscreen \
+            --volume "$GITHUB_WORKSPACE:/workspace/buntinglabs-qgis-plugin:ro" \
+            --workdir /workspace \
+            qgis/qgis:3.44.12 \
+            python3 /workspace/buntinglabs-qgis-plugin/tests/qgis_import_smoke.py
