@@ -7,7 +7,7 @@ from pathlib import Path
 from qgis.core import Qgis, QgsApplication
 
 
-EXPECTED_QGIS_VERSION = 34412
+SUPPORTED_QGIS_MAJOR_VERSIONS = {3, 4}
 PLUGIN_DIRECTORY = Path(__file__).resolve().parents[1]
 PLUGIN_PACKAGE = PLUGIN_DIRECTORY.name
 PLUGIN_MODULES = (
@@ -22,9 +22,10 @@ PLUGIN_MODULES = (
 
 
 def main() -> None:
-    if Qgis.QGIS_VERSION_INT != EXPECTED_QGIS_VERSION:
+    qgis_major_version = Qgis.QGIS_VERSION_INT // 10000
+    if qgis_major_version not in SUPPORTED_QGIS_MAJOR_VERSIONS:
         raise RuntimeError(
-            f"Expected QGIS 3.44.12, found {Qgis.QGIS_VERSION} "
+            f"Expected QGIS major version 3 or 4, found {Qgis.QGIS_VERSION} "
             f"({Qgis.QGIS_VERSION_INT})"
         )
 
