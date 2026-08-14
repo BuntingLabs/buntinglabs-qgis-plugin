@@ -8,19 +8,23 @@ import json
 import base64
 from enum import Enum
 
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, \
-    QPushButton, QAction, QHBoxLayout, QCheckBox, QFileDialog, QProgressBar, \
+from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, \
+    QPushButton, QHBoxLayout, QCheckBox, QFileDialog, QProgressBar, \
     QToolBar
-from PyQt5.QtGui import QIcon, QMovie, QPixmap
-from PyQt5.QtCore import QSettings, Qt, QSize, QTimer, QUrl
+from qgis.PyQt.QtGui import QDesktopServices, QIcon, QMovie, QPixmap
+# QAction lives in QtWidgets under Qt5 and in QtGui under Qt6. qgis.PyQt.QtGui
+# only re-exports it for Qt5 builds since QGIS 3.36, so fall back for 3.18-3.34.
+try:
+    from qgis.PyQt.QtGui import QAction
+except ImportError:
+    from qgis.PyQt.QtWidgets import QAction
+from qgis.PyQt.QtCore import QSettings, Qt, QSize, QTimer, QUrl, Q_ARG
 
 from qgis.core import Qgis, QgsApplication, QgsVectorLayer, QgsWkbTypes, \
     QgsNetworkAccessManager
 from qgis.core import QgsPointXY, QgsProject, QgsCoordinateReferenceSystem, \
     QgsCoordinateTransform, QgsLineString
 from qgis.gui import QgsMapToolCapture, QgsMapCanvas
-from qgis.PyQt.QtGui import QDesktopServices
-from qgis.PyQt.QtCore import QUrl, QTimer, Q_ARG
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 from .ai_tracer import AIVectorizerTool
@@ -248,8 +252,8 @@ class BuntingLabsPlugin:
         # Create a dialog with a progress bar
         dialog = QDialog(self.iface.mainWindow())
         dialog.setWindowTitle("Uploading raster to server...")
-        dialog.setWindowModality(Qt.NonModal)  # Make the dialog non-modal
-        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowStaysOnTopHint)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)  # Make the dialog non-modal
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout(dialog)
         progress_bar = QProgressBar(dialog)
@@ -321,7 +325,7 @@ class BuntingLabsPlugin:
         self.iface.messageBar().pushMessage(
             "Bunting Labs AI Georeferencer",
             error_msg,
-            Qgis.Critical,
+            Qgis.MessageLevel.Critical,
             duration=30
         )
 
@@ -368,7 +372,7 @@ class BuntingLabsPlugin:
         # If the user doesn't have the plugins toolbar visible, show a warning.
         if not self.iface.pluginToolBar().isVisible():
             self.notifyUserOfMessage("The plugins toolbar is not visible. Enable it in View > Toolbars > Plugins Toolbar.",
-                                     Qgis.Warning,
+                                     Qgis.MessageLevel.Warning,
                                      'https://youtu.be/Wm1pTj55Rys',
                                      'Watch Tutorial',
                                      120)
@@ -402,10 +406,15 @@ class BuntingLabsPlugin:
         intro_text.setWordWrap(True)
         layout.addWidget(intro_text)
 
-        pixmap = QPixmap(os.path.join(os.path.dirname(__file__), 'assets', 'plugin_data_flow.png')).scaled(422, 396, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        pixmap = QPixmap(os.path.join(os.path.dirname(__file__), 'assets', 'plugin_data_flow.png')).scaled(
+            422,
+            396,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         pixmap_label = QLabel()
         pixmap_label.setPixmap(pixmap)
-        pixmap_label.setAlignment(Qt.AlignCenter)
+        pixmap_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(pixmap_label)
 
         explain_text = QLabel("Because your maps are sent to our servers to run the AI, you must agree to our <a href=\"https://buntinglabs.com/legal/terms\">terms of service</a> to use the plugin.")
@@ -427,12 +436,12 @@ class BuntingLabsPlugin:
         layout.addLayout(tos_layout)
 
         version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
-        version_label.setAlignment(Qt.AlignCenter)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout.addWidget(version_label)
 
         tos_dialog.setLayout(layout)
-        tos_dialog.exec_()
+        tos_dialog.exec()
 
     # 2. Email dialog, which triggers emailSubmitted below.
     def openEmailDialog(self):
@@ -470,12 +479,12 @@ class BuntingLabsPlugin:
         layout.addLayout(email_button_layout)
 
         version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
-        version_label.setAlignment(Qt.AlignCenter)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout.addWidget(version_label)
 
         email_dialog.setLayout(layout)
-        email_dialog.exec_()
+        email_dialog.exec()
 
     # Triggered in openEmailDialog
     def emailSubmitted(self):
@@ -544,12 +553,12 @@ class BuntingLabsPlugin:
             layout.addLayout(secret_button_layout)
 
             version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
-            version_label.setAlignment(Qt.AlignCenter)
+            version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             layout.addWidget(version_label)
 
             token_dialog.setLayout(layout)
-            token_dialog.exec_()
+            token_dialog.exec()
         else:
             assert status == 'created'
 
@@ -575,10 +584,15 @@ class BuntingLabsPlugin:
             instruction_text.setWordWrap(True)
             layout.addWidget(instruction_text)
 
-            pixmap = QPixmap(os.path.join(os.path.dirname(__file__), 'assets', 'confirm_email.png')).scaled(512, 295, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pixmap = QPixmap(os.path.join(os.path.dirname(__file__), 'assets', 'confirm_email.png')).scaled(
+                512,
+                295,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
             pixmap_label = QLabel()
             pixmap_label.setPixmap(pixmap)
-            pixmap_label.setAlignment(Qt.AlignCenter)
+            pixmap_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(pixmap_label)
 
             explain_text = QLabel("Click “Continue” in the email to activate your account. You can then return to QGIS and finish installation by clicking the button below.")
@@ -588,7 +602,7 @@ class BuntingLabsPlugin:
             status_layout = QHBoxLayout()
 
             self.email_validated_status = QLabel("")
-            self.email_validated_status.setAlignment(Qt.AlignCenter)
+            self.email_validated_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.email_validated_status.setStyleSheet("QLabel {color: darkred; font-size: 18px;}")
             status_layout.addWidget(self.email_validated_status)
 
@@ -600,17 +614,17 @@ class BuntingLabsPlugin:
             layout.addLayout(status_layout)
 
             change_email_link = QLabel("<a href='#'>Change email</a>")
-            change_email_link.setAlignment(Qt.AlignCenter)
+            change_email_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
             change_email_link.linkActivated.connect(lambda: (self.email_confirm_dialog.accept(), self.openEmailDialog()))
             layout.addWidget(change_email_link)
 
             version_label = QLabel(f"Bunting Labs AI Vectorizer v{self.plugin_version}")
-            version_label.setAlignment(Qt.AlignCenter)
+            version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             layout.addWidget(version_label)
 
             self.email_confirm_dialog.setLayout(layout)
-            self.email_confirm_dialog.exec_()
+            self.email_confirm_dialog.exec()
 
     def tokenSubmitted(self):
         self.settings.setValue(SETTING_API_TOKEN, self.token_input.text())
@@ -681,21 +695,21 @@ class BuntingLabsPlugin:
         layout.addWidget(close_button)
 
         onboarding_dialog.setLayout(layout)
-        onboarding_dialog.exec_()
+        onboarding_dialog.exec()
 
     def digitizeLandDescription(self):
         mapTool = self.iface.mapCanvas().mapTool()
         # No clue when it wouldn't have 'points' attribute/method
         if not isinstance(mapTool, QgsMapToolCapture) or not hasattr(mapTool, 'points'):
             self.notifyUserOfMessage("Active map tool must be Add Line Feature tool for Digitize Land Description",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
                 'https://youtu.be/gufDsGYwJoM',
                 'Watch Tutorial',
                 60)
             return
         elif isinstance(mapTool, AIVectorizerTool):
             self.notifyUserOfMessage("Use the Add Line Feature tool for Digitize Land Description (not AI Vectorizer)",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
                 'https://youtu.be/gufDsGYwJoM',
                 'Watch Tutorial',
                 60)
@@ -703,14 +717,14 @@ class BuntingLabsPlugin:
 
         if len(mapTool.points()) == 0:
             self.notifyUserOfMessage("Manually draw the point of beginning with Add Line Feature before selecting PDF",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
                 'https://youtu.be/gufDsGYwJoM',
                 'Watch Tutorial',
                 60)
             return
         elif len(mapTool.points()) > 1:
             self.notifyUserOfMessage(f"Draw only 1 point of beginning vertex. You've drawn {len(mapTool.points())} vertices",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
                 'https://youtu.be/gufDsGYwJoM',
                 'Watch Tutorial',
                 60)
@@ -721,7 +735,7 @@ class BuntingLabsPlugin:
         active_layer = self.iface.activeLayer()
         if not active_layer or not isinstance(active_layer, QgsVectorLayer):
             self.notifyUserOfMessage("Please select the target vector layer before digitizing a land description",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
                 'https://youtu.be/gufDsGYwJoM',
                 'Watch Tutorial',
                 60)
@@ -736,9 +750,9 @@ class BuntingLabsPlugin:
         wgs84_pob = transform.transform(point_of_beginning)
 
         file_dialog = QFileDialog()
-        file_dialog.setFileMode(QFileDialog.ExistingFile)
+        file_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
         file_dialog.setNameFilter("PDF Files (*.pdf)")
-        if file_dialog.exec_():
+        if file_dialog.exec():
             selected_files = file_dialog.selectedFiles()
             if selected_files:
                 lat, lon = wgs84_pob.y(), wgs84_pob.x()
@@ -767,7 +781,7 @@ class BuntingLabsPlugin:
             mapTool.addVertex(coord)
 
         self.notifyUserOfMessage(f"Successfully digitized {len(coords)} coordinates from the land description.",
-                                Qgis.Success,
+                                Qgis.MessageLevel.Success,
                                 None,
                                 None,
                                 60)
@@ -813,7 +827,7 @@ class BuntingLabsPlugin:
         layout.addWidget(save_button)
 
         self.api_key_dialog.setLayout(layout)
-        self.api_key_dialog.exec_()
+        self.api_key_dialog.exec()
 
     def saveSettings(self):
         # Save the API key from the input field to the settings
@@ -822,7 +836,7 @@ class BuntingLabsPlugin:
         self.iface.messageBar().pushMessage(
             "Bunting Labs AI Vectorizer",
             "Settings saved successfully.",
-            Qgis.Info,
+            Qgis.MessageLevel.Info,
             duration=10
         )
 
@@ -872,7 +886,7 @@ class BuntingLabsPlugin:
                 # To get here, I think they need to click it through
                 # the Plugins menu, so they could be a little confused.
                 self.notifyUserOfMessage("To use the AI Vectorizer, finish onboarding, select a vector layer, and enable editing.",
-                                        Qgis.Warning,
+                                        Qgis.MessageLevel.Warning,
                                         'https://www.youtube.com/watch?v=PKEuQS4sMJE',
                                         'Watch Tutorial',
                                         120)

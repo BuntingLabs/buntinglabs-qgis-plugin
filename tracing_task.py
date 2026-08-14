@@ -12,7 +12,7 @@ import math
 from qgis.core import QgsTask, QgsMapSettings, QgsMapRendererCustomPainterJob, \
     QgsCoordinateTransform, QgsProject, QgsNetworkAccessManager, Qgis
 from qgis.PyQt.QtGui import QImage, QPainter, QColor
-from qgis.PyQt.QtCore import QSize, pyqtSignal, QUrl, QEventLoop, QTimer
+from qgis.PyQt.QtCore import QSettings, QSize, pyqtSignal, QUrl, QEventLoop, QTimer
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 
 # Safely detect WEBP support
@@ -70,7 +70,7 @@ class UploadChunkAndSolveTask(QgsTask):
                  should_solve=False, clear_chunk_cache=False):
         super().__init__(
             'AI Vectorizer processing map chunks on server' if should_solve else 'AI Vectorizer preloading map chunks',
-            QgsTask.CanCancel
+            QgsTask.Flag.CanCancel
         )
 
         self.tracing_tool = tracing_tool
@@ -116,7 +116,7 @@ class UploadChunkAndSolveTask(QgsTask):
             # Format_RGB888 is 24-bit (8 bits each) for each color channel, unlike
             # Format_RGB32 which by default has 0xff on the alpha channel, and screws
             # up reading it into GDAL!
-            img = QImage(QSize(chunk.chunk_size, chunk.chunk_size), QImage.Format_RGB888)
+            img = QImage(QSize(chunk.chunk_size, chunk.chunk_size), QImage.Format.Format_RGB888)
 
             # white is most canonically background
             color = QColor(255, 255, 255)
@@ -128,7 +128,7 @@ class UploadChunkAndSolveTask(QgsTask):
 
             p = QPainter()
             p.begin(img)
-            p.setRenderHint(QPainter.Antialiasing)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
             render = QgsMapRendererCustomPainterJob(mapSettings, p)
             render.start()
@@ -149,7 +149,7 @@ class UploadChunkAndSolveTask(QgsTask):
                 rendered_chunks.append(tif_data)
 
             except Exception as e:
-                self.messageReceived.emit((str(e), Qgis.Critical, None, None, 15))
+                self.messageReceived.emit((str(e), Qgis.MessageLevel.Critical, None, None, 15))
                 return False
 
         boundary = 'wL36Yn8afVp8Ag7AmP8qZ0SA4n1v9T'
@@ -188,7 +188,6 @@ class UploadChunkAndSolveTask(QgsTask):
         body = b'\r\n'.join([part.encode() if isinstance(part, str) else part for part in body])
 
         try:
-            from PyQt5.QtCore import QSettings
             from qgis.core import QgsApplication
             locale = str(QSettings().value("locale/userLocale", QgsApplication.locale()))[:2]
         except Exception as e:
@@ -236,7 +235,7 @@ class UploadChunkAndSolveTask(QgsTask):
 
                 # First server boot can take a second: show a helpful message
                 if elapsed_time > 3.0 and not any(self.tracing_tool.chunk_cache.values()) and not self.hasNotifiedOfBoot:
-                    self.messageReceived.emit(("Server is probably booting, please give it ~10 seconds!", Qgis.Info, None, None, 10))
+                    self.messageReceived.emit(("Server is probably booting, please give it ~10 seconds!", Qgis.MessageLevel.Info, None, None, 10))
                     self.hasNotifiedOfBoot = True
 
             pb_timer.timeout.connect(update_progress)
@@ -244,7 +243,7 @@ class UploadChunkAndSolveTask(QgsTask):
 
             loop = QEventLoop()
             reply.finished.connect(loop.quit)
-            loop.exec_()
+            loop.exec()
 
             pb_timer.stop()
 
@@ -253,19 +252,19 @@ class UploadChunkAndSolveTask(QgsTask):
                 self.clearCache.emit()
 
             content = reply.readAll().data()
-            if reply.error() == QNetworkReply.HostNotFoundError:
-                self.messageReceived.emit(('Could not connect to autocomplete server, is your internet working?', Qgis.Critical, None, None, 15))
+            if reply.error() == QNetworkReply.NetworkError.HostNotFoundError:
+                self.messageReceived.emit(('Could not connect to autocomplete server, is your internet working?', Qgis.MessageLevel.Critical, None, None, 15))
                 return False
-            elif reply.error() == QNetworkReply.RemoteHostClosedError:
-                self.messageReceived.emit(('Connection to server was unexpectedly closed. Try again or check your network.', Qgis.Critical, None, None, 15))
+            elif reply.error() == QNetworkReply.NetworkError.RemoteHostClosedError:
+                self.messageReceived.emit(('Connection to server was unexpectedly closed. Try again or check your network.', Qgis.MessageLevel.Critical, None, None, 15))
                 return False
-            elif reply.error() == QNetworkReply.TimeoutError:
-                self.messageReceived.emit(('Server connection timed out, internet might be too slow', Qgis.Critical, None, None, 15))
+            elif reply.error() == QNetworkReply.NetworkError.TimeoutError:
+                self.messageReceived.emit(('Server connection timed out, internet might be too slow', Qgis.MessageLevel.Critical, None, None, 15))
                 return False
-            elif reply.error() == QNetworkReply.UnknownNetworkError:
-                self.messageReceived.emit(('Network error encountered, internet issues', Qgis.Critical, None, None, 15))
+            elif reply.error() == QNetworkReply.NetworkError.UnknownNetworkError:
+                self.messageReceived.emit(('Network error encountered, internet issues', Qgis.MessageLevel.Critical, None, None, 15))
                 return False
-            elif reply.error() != QNetworkReply.NoError:
+            elif reply.error() != QNetworkReply.NetworkError.NoError:
                 print('QNetworkReply', reply.error())
                 if reply.rawHeader(b'Content-Encoding') == b'gzip':
                     content = gzip.decompress(content).decode('utf-8')
@@ -275,13 +274,13 @@ class UploadChunkAndSolveTask(QgsTask):
                     error_details = json.loads(content)
                     self.messageReceived.emit((
                         error_details.get('message'),
-                        Qgis.Critical,
+                        Qgis.MessageLevel.Critical,
                         error_details.get('link'),
                         error_details.get('link_text'),
                         15
                     ))
                 except json.JSONDecodeError:
-                    self.messageReceived.emit((content, Qgis.Critical, None, None, 15))
+                    self.messageReceived.emit((content, Qgis.MessageLevel.Critical, None, None, 15))
                 return False
 
             self.setProgress(80.0)
@@ -309,7 +308,7 @@ class UploadChunkAndSolveTask(QgsTask):
                 self.metadataReceived.emit((data['chunks_today'], data['chunks_left_today'], data['pricing_tier'], data['fly_instance_id'] if 'fly_instance_id' in data else None))
 
         except Exception as e:
-            self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.Critical, None, None, 15))
+            self.messageReceived.emit((f'Error connecting to autocomplete server: {str(e)}', Qgis.MessageLevel.Critical, None, None, 15))
             return False
 
         # Update expected time

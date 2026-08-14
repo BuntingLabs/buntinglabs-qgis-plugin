@@ -15,8 +15,6 @@ from qgis.gui import QgsMapToolCapture, QgsRubberBand, QgsSnapIndicator
 from qgis.core import Qgis, QgsFeature, QgsApplication, QgsPointXY, \
     QgsGeometry, QgsPolygon, QgsProject, QgsVectorLayer, QgsRasterLayer, \
     QgsWkbTypes, QgsLayerTreeLayer, QgsRectangle, QgsLineString
-from qgis.core import QgsField
-from PyQt5.QtCore import QVariant
 import numpy as np
 
 from .tracing_task import UploadChunkAndSolveTask, \
@@ -140,14 +138,14 @@ class Chunk:
         return chunks
 
 SUPPORTED_VECTOR_TYPES = [
-    QgsWkbTypes.LineString,
-    QgsWkbTypes.MultiLineString,
-    QgsWkbTypes.Polygon,
-    QgsWkbTypes.MultiPolygon,
-    QgsWkbTypes.CompoundCurve,
-    QgsWkbTypes.CurvePolygon,
-    QgsWkbTypes.MultiCurve,
-    QgsWkbTypes.MultiSurface
+    QgsWkbTypes.Type.LineString,
+    QgsWkbTypes.Type.MultiLineString,
+    QgsWkbTypes.Type.Polygon,
+    QgsWkbTypes.Type.MultiPolygon,
+    QgsWkbTypes.Type.CompoundCurve,
+    QgsWkbTypes.Type.CurvePolygon,
+    QgsWkbTypes.Type.MultiCurve,
+    QgsWkbTypes.Type.MultiSurface
 ]
 
 class AutocompleteCache:
@@ -190,22 +188,22 @@ class AIVectorizerTool(QgsMapToolCapture):
     def __init__(self, plugin):
         # Extend QgsMapToolCapture
         cadDockWidget = plugin.iface.cadDockWidget()
-        super(AIVectorizerTool, self).__init__(plugin.iface.mapCanvas(), cadDockWidget, QgsMapToolCapture.CaptureNone)
+        super(AIVectorizerTool, self).__init__(plugin.iface.mapCanvas(), cadDockWidget, QgsMapToolCapture.CaptureMode.CaptureNone)
 
         self.plugin = plugin
         self.rb = self.initRubberBand()
 
-        self.chunk_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
+        self.chunk_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.GeometryType.PolygonGeometry)
         self.chunk_cache = dict() # True=uploaded, False=uploading
         self.fly_instance_id = None
         self.last_server_error = datetime.min # long ago
 
         # FOG OF WAR
-        self.fow_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
+        self.fow_rb = QgsRubberBand(plugin.iface.mapCanvas(), QgsWkbTypes.GeometryType.PolygonGeometry)
         self.fow_rb.setFillColor(QColor(0, 0, 0, 0))  # transparent
         self.fow_rb.setStrokeColor(QColor(0, 255, 0, 128))  # 50% transparent lime green
         self.fow_rb.setWidth(6)
-        self.fow_rb.setLineStyle(Qt.SolidLine)
+        self.fow_rb.setLineStyle(Qt.PenStyle.SolidLine)
 
         # List of QgsPointXY that represents the new feature
         # via QgsMapTool.toMapCoordinates(), it's in project CRS
@@ -259,29 +257,33 @@ class AIVectorizerTool(QgsMapToolCapture):
                 self.chunksRemainingPB.setValue(chunks_today)
                 self.chunksRemainingPB.setMaximum(chunks_left_today)
                 self.chunksRemainingPB.setFormat("%v / %m chunks")
-                self.chunksRemainingPB.setAlignment(Qt.AlignLeft|Qt.AlignVCenter)
+                self.chunksRemainingPB.setAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                )
                 self.progressMessageBar.layout().addWidget(self.statusLabel)
                 self.progressMessageBar.layout().addWidget(self.chunksRemainingPB)
-                self.plugin.iface.messageBar().pushWidget(self.progressMessageBar, Qgis.Info)
+                self.plugin.iface.messageBar().pushWidget(
+                    self.progressMessageBar, Qgis.MessageLevel.Info
+                )
 
                 self.is_message_bar_visible = True
 
     def initRubberBand(self):
-        if self.mode() == QgsMapToolCapture.CaptureLine:
-            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.LineGeometry)
-        elif self.mode() == QgsMapToolCapture.CapturePolygon:
-            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.PolygonGeometry)
+        if self.mode() == QgsMapToolCapture.CaptureMode.CaptureLine:
+            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.GeometryType.LineGeometry)
+        elif self.mode() == QgsMapToolCapture.CaptureMode.CapturePolygon:
+            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.GeometryType.PolygonGeometry)
         else:
             # TODO not sure when we get here.
             # But it shouldn't matter because rb.setToGeometry "also
             # change[s] the geometry type of the rubberband."
-            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.LineGeometry)
+            rb = QgsRubberBand(self.plugin.iface.mapCanvas(), QgsWkbTypes.GeometryType.LineGeometry)
 
         rb.setFillColor(self.digitizingFillColor())
         rb.setStrokeColor(self.digitizingStrokeColor())
         # Don't set the stroke width to be anything less than 3
         rb.setWidth(max(3, self.digitizingStrokeWidth()))
-        rb.setLineStyle(Qt.DotLine)
+        rb.setLineStyle(Qt.PenStyle.DotLine)
 
         return rb
 
@@ -422,7 +424,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             return
 
         # Shift key means ignore autocomplete, or we force manual completion on first vertex
-        if e.modifiers() & Qt.ShiftModifier or len(self.vertices) == 1:
+        if e.modifiers() & Qt.KeyboardModifier.ShiftModifier or len(self.vertices) == 1:
             self.rb.setToGeometry(
                 QgsGeometry.fromPolylineXY([self.vertices[-1], pt]),
                 None
@@ -485,29 +487,29 @@ class AIVectorizerTool(QgsMapToolCapture):
     def canvasReleaseEvent(self, e):
         vlayer = self.plugin.iface.activeLayer()
         if not isinstance(vlayer, QgsVectorLayer):
-            self.notifyUserOfMessage("The active layer is not a vector layer.", Qgis.Warning, None, None, 10)
+            self.notifyUserOfMessage("The active layer is not a vector layer.", Qgis.MessageLevel.Warning, None, None, 10)
             return
         elif vlayer.wkbType() not in SUPPORTED_VECTOR_TYPES:
             self.notifyUserOfMessage(
                 f"Vector layer type '{QgsWkbTypes.displayString(vlayer.wkbType())}' is not supported for AI autocomplete.",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
                 None,
                 None,
                 15
             )
             return
 
-        if e.button() == Qt.RightButton:
+        if e.button() == Qt.MouseButton.RightButton:
             # Will be converted to the relevant geometry
             curve = self.captureCurve()
 
             # Null fields
             f = QgsFeature(vlayer.fields(), 0)
 
-            if self.mode() == QgsMapToolCapture.CaptureLine:
+            if self.mode() == QgsMapToolCapture.CaptureMode.CaptureLine:
                 g = QgsGeometry(curve.curveToLine())
                 f.setGeometry(g)
-            elif self.mode() == QgsMapToolCapture.CapturePolygon:
+            elif self.mode() == QgsMapToolCapture.CaptureMode.CapturePolygon:
                 poly = QgsPolygon()
                 poly.setExteriorRing(curve.curveToLine())
 
@@ -524,7 +526,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
             # Clean up the plugin between features
             self.clearState()
-        elif e.button() == Qt.LeftButton:
+        elif e.button() == Qt.MouseButton.LeftButton:
             # QgsPointXY with map CRS
             if self.snapIndicator.match().type():
                 point = self.snapIndicator.match().point()
@@ -537,7 +539,7 @@ class AIVectorizerTool(QgsMapToolCapture):
             vertex_px_added = 0
 
             # Shift key ignores autocomplete and just adds a single vertex
-            if e.modifiers() & Qt.ShiftModifier or queued_points is None:
+            if e.modifiers() & Qt.KeyboardModifier.ShiftModifier or queued_points is None:
                 self.addVertex(point)
                 self.vertices.append(point)
             else:
@@ -602,7 +604,7 @@ class AIVectorizerTool(QgsMapToolCapture):
 
     def keyPressEvent(self, e):
         # e.ignore() is .accept() for some reason
-        if e.key() in (Qt.Key_Backspace, Qt.Key_Delete) and len(self.vertices) >= 2:
+        if e.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete) and len(self.vertices) >= 2:
             if not e.isAutoRepeat():
                 self.undo()
                 self.vertices.pop()
@@ -619,7 +621,7 @@ class AIVectorizerTool(QgsMapToolCapture):
                 self.last_graph = None
 
                 return
-        elif e.key() == Qt.Key_Escape:
+        elif e.key() == Qt.Key.Key_Escape:
             self.stopCapturing()
             self.vertices = []
             self.rb.reset()
@@ -661,12 +663,12 @@ class AIVectorizerTool(QgsMapToolCapture):
 
         vlayer = self.plugin.iface.activeLayer()
         if not isinstance(vlayer, QgsVectorLayer):
-            self.notifyUserOfMessage("The active layer is not a vector layer.", Qgis.Warning, None, None, 10)
+            self.notifyUserOfMessage("The active layer is not a vector layer.", Qgis.MessageLevel.Warning, None, None, 10)
             return False
         elif vlayer.wkbType() not in SUPPORTED_VECTOR_TYPES:
             self.notifyUserOfMessage(
                 f"Vector layer type '{QgsWkbTypes.displayString(vlayer.wkbType())}' is not supported for AI autocomplete.",
-                Qgis.Warning,
+                Qgis.MessageLevel.Warning,
                 None,
                 None,
                 15

@@ -2,10 +2,15 @@
 
 from qgis.PyQt.QtNetwork import QNetworkRequest, QNetworkReply
 from qgis.core import QgsTask, QgsMessageLog, Qgis, QgsNetworkAccessManager
-from qgis.PyQt.QtCore import pyqtSignal, QUrl, QEventLoop
-from PyQt5.QtCore import QByteArray
+from qgis.PyQt.QtCore import QByteArray, pyqtSignal, QUrl, QEventLoop
 
 MESSAGE_CATEGORY = 'EmailRegisterTask'
+
+def _registration_form_data(user_email, api_key):
+    data = QByteArray()
+    data.append(b"email=" + QUrl.toPercentEncoding(user_email).data())
+    data.append(b"&api_key=" + QUrl.toPercentEncoding(api_key).data())
+    return data
 
 class EmailRegisterTask(QgsTask):
     """This task registers a user's email"""
@@ -13,7 +18,7 @@ class EmailRegisterTask(QgsTask):
     finishedSignal = pyqtSignal(str)
     
     def __init__(self, description, user_email, user_agent, api_key):
-        super().__init__(description, QgsTask.CanCancel)
+        super().__init__(description, QgsTask.Flag.CanCancel)
         self.user_email = user_email
         self.user_agent = user_agent
         self.api_key = api_key
@@ -22,15 +27,13 @@ class EmailRegisterTask(QgsTask):
     def run(self):
         """Perform the email registration"""
         QgsMessageLog.logMessage('Started task "{}"'.format(self.description()),
-                                 MESSAGE_CATEGORY, Qgis.Info)
+                                 MESSAGE_CATEGORY, Qgis.MessageLevel.Info)
         url = QUrl('https://buntinglabs.com/account/register')
         request = QNetworkRequest(url)
-        request.setHeader(QNetworkRequest.UserAgentHeader, self.user_agent)
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, self.user_agent)
         request.setRawHeader(b'Host', b'buntinglabs.com')
 
-        data = QByteArray()
-        data.append(f"email={QUrl.toPercentEncoding(self.user_email).data().decode()}")
-        data.append(f"&api_key={QUrl.toPercentEncoding(self.api_key).data().decode()}")
+        data = _registration_form_data(self.user_email, self.api_key)
 
         try:
             nam = QgsNetworkAccessManager.instance()
@@ -38,17 +41,17 @@ class EmailRegisterTask(QgsTask):
 
             loop = QEventLoop()
             reply.finished.connect(loop.quit)
-            loop.exec_()
+            loop.exec()
 
-            if reply.error() == QNetworkReply.NoError:
+            if reply.error() == QNetworkReply.NetworkError.NoError:
                 self.finishedSignal.emit('created')
                 return True
             else:
-                if reply.attribute(QNetworkRequest.HttpStatusCodeAttribute) == 500:
+                if reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) == 500:
                     if reply.readAll().data().decode() == 'refresh_token':
                         self.finishedSignal.emit('refresh_token')
                         return True
-                self.exception = Exception(f'Registration failed with status code: {reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)}')
+                self.exception = Exception(f'Registration failed with status code: {reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)}')
                 self.finishedSignal.emit('failed')
                 return False
         except Exception as e:
@@ -59,18 +62,18 @@ class EmailRegisterTask(QgsTask):
         """This function is called when the task has completed"""
         if result:
             QgsMessageLog.logMessage('Email registration task "{}" completed successfully'.format(self.description()),
-                                     MESSAGE_CATEGORY, Qgis.Success)
+                                     MESSAGE_CATEGORY, Qgis.MessageLevel.Success)
         else:
             if self.exception is None:
                 QgsMessageLog.logMessage('Email registration task "{}" was not successful but without exception'.format(self.description()),
-                                         MESSAGE_CATEGORY, Qgis.Warning)
+                                         MESSAGE_CATEGORY, Qgis.MessageLevel.Warning)
             else:
                 QgsMessageLog.logMessage('Email registration task "{}" Exception: {}'.format(self.description(), self.exception),
-                                         MESSAGE_CATEGORY, Qgis.Critical)
+                                         MESSAGE_CATEGORY, Qgis.MessageLevel.Critical)
 
     def cancel(self):
         QgsMessageLog.logMessage('Email registration task "{}" was canceled'.format(self.description()),
-                                 MESSAGE_CATEGORY, Qgis.Info)
+                                 MESSAGE_CATEGORY, Qgis.MessageLevel.Info)
         super().cancel()
 
 
@@ -81,7 +84,7 @@ class ValidateEmailTask(QgsTask):
     finishedSignal = pyqtSignal(bool)
 
     def __init__(self, description, api_key):
-        super().__init__(description, QgsTask.CanCancel)
+        super().__init__(description, QgsTask.Flag.CanCancel)
         self.api_key = api_key
         self.exception = None
 
@@ -103,9 +106,9 @@ class ValidateEmailTask(QgsTask):
 
             loop = QEventLoop()
             reply.finished.connect(loop.quit)
-            loop.exec_()
+            loop.exec()
 
-            if reply.error() != QNetworkReply.NoError:
+            if reply.error() != QNetworkReply.NetworkError.NoError:
                 self.exception = Exception(reply.readAll().data().decode('utf-8'))
                 self.finishedSignal.emit(False)
                 return False
@@ -125,5 +128,5 @@ class ValidateEmailTask(QgsTask):
 
     def cancel(self):
         QgsMessageLog.logMessage('API token validation task "{}" was canceled'.format(self.description()),
-                                 MESSAGE_CATEGORY, Qgis.Info)
+                                 MESSAGE_CATEGORY, Qgis.MessageLevel.Info)
         super().cancel()

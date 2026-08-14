@@ -3,9 +3,9 @@
 import os
 from typing import List
 
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt
+from qgis.PyQt.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel
+from qgis.PyQt.QtGui import QPixmap
+from qgis.PyQt.QtCore import Qt
 
 class OnboardingHeaderWidget(QWidget):
     def __init__(self, steps: List[str], active_step: int, parent=None):
@@ -14,8 +14,13 @@ class OnboardingHeaderWidget(QWidget):
 
         logo = QPixmap(os.path.join(os.path.dirname(__file__), 'assets', 'bunting_bird.png'))
         logo_label = QLabel()
-        logo_label.setPixmap(logo.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        logo_label.setAlignment(Qt.AlignCenter)
+        logo_label.setPixmap(logo.scaled(
+            64,
+            64,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(logo_label)
 
         for i, step in enumerate(steps):
@@ -34,10 +39,10 @@ class StepWidget(QWidget):
         self.circle.setStyleSheet("border: 1px solid; border-radius: 10px;")
         if active:
             self.circle.setStyleSheet("border: 1px solid; border-radius: 10px; background-color: #1B6585;")
-        self.layout.addWidget(self.circle, 0, Qt.AlignHCenter) # Vertically align the circle above the label
+        self.layout.addWidget(self.circle, 0, Qt.AlignmentFlag.AlignHCenter) # Vertically align the circle above the label
         
         self.label = QLabel(text, self)
-        self.label.setAlignment(Qt.AlignCenter) # Center align the text
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter) # Center align the text
         self.layout.addWidget(self.label) # Add the label to the layout
 
         font = self.label.font()
